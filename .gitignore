@@ -1,0 +1,10 @@
+# Compiled application binaries
+/taskflow
+/taskflow.exe
+
+# Go test and coverage output
+*.test
+*.out
+
+# Local environment variables
+.env

@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"encoding/json"
@@ -12,7 +12,7 @@ func TestHealthEndpoint(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/health", nil)
 	recorder := httptest.NewRecorder()
 
-	newMux().ServeHTTP(recorder, request)
+	NewRouter(nil).ServeHTTP(recorder, request)
 
 	response := recorder.Result()
 	defer response.Body.Close()
@@ -36,17 +36,12 @@ func TestHealthEndpoint(t *testing.T) {
 }
 
 func TestGreetingEndpoint(t *testing.T) {
-	request := httptest.NewRequest(
-		http.MethodPost,
-		"/greet",
-		strings.NewReader(`{"name":"Saad"}`),
-	)
-
+	request := httptest.NewRequest(http.MethodPost, "/greet", strings.NewReader(`{"name":"Saad"}`))
 	request.Header.Set("Content-Type", "application/json")
 
 	recorder := httptest.NewRecorder()
+	NewRouter(nil).ServeHTTP(recorder, request)
 
-	newMux().ServeHTTP(recorder, request)
 	response := recorder.Result()
 	defer response.Body.Close()
 
@@ -67,17 +62,13 @@ func TestGreetingEndpoint(t *testing.T) {
 		t.Errorf("message = %q, want %q", body.Message, "Hello, Saad!")
 	}
 }
+
 func TestGreetingEndpointRejectsBlankName(t *testing.T) {
-	request := httptest.NewRequest(
-		http.MethodPost,
-		"/greet",
-		strings.NewReader(`{"name":"   "}`),
-	)
+	request := httptest.NewRequest(http.MethodPost, "/greet", strings.NewReader(`{"name":"   "}`))
 	request.Header.Set("Content-Type", "application/json")
 
 	recorder := httptest.NewRecorder()
-
-	newMux().ServeHTTP(recorder, request)
+	NewRouter(nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusBadRequest)
@@ -89,16 +80,11 @@ func TestGreetingEndpointRejectsBlankName(t *testing.T) {
 }
 
 func TestGreetingEndpointRejectsInvalidJSON(t *testing.T) {
-	request := httptest.NewRequest(
-		http.MethodPost,
-		"/greet",
-		strings.NewReader(`{"name":`),
-	)
+	request := httptest.NewRequest(http.MethodPost, "/greet", strings.NewReader(`{"name":`))
 	request.Header.Set("Content-Type", "application/json")
 
 	recorder := httptest.NewRecorder()
-
-	newMux().ServeHTTP(recorder, request)
+	NewRouter(nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusBadRequest)

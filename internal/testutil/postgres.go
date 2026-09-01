@@ -8,6 +8,8 @@ import (
 	"github.com/SaadShakeel1/TaskFlow/internal/database"
 )
 
+const testDatabaseName = "taskflow_test"
+
 func OpenTestDB(t testing.TB) *sql.DB {
 	t.Helper()
 
@@ -19,6 +21,21 @@ func OpenTestDB(t testing.TB) *sql.DB {
 	db, err := database.Open(databaseURL)
 	if err != nil {
 		t.Fatalf("open test database: %v", err)
+	}
+
+	var databaseName string
+	err = db.QueryRow("SELECT current_database()").Scan(&databaseName)
+
+	if err != nil {
+		db.Close()
+		t.Fatalf("get current database name: %v", err)
+	}
+
+	if databaseName != testDatabaseName {
+		db.Close()
+		t.Fatalf("refusing to run tests against database %q; expected %q",
+			databaseName,
+			testDatabaseName)
 	}
 
 	t.Cleanup(func() {

@@ -1,4 +1,4 @@
-package api
+package main
 
 import (
 	"context"
@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SaadShakeel1/TaskFlow/internal/models"
 	"github.com/SaadShakeel1/TaskFlow/internal/testutil"
-	"github.com/SaadShakeel1/TaskFlow/internal/users"
 )
 
 const databaseTestTimeout = 5 * time.Second
@@ -32,7 +32,7 @@ func TestCreateUserEndpoint(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 
 	recorder := httptest.NewRecorder()
-	NewRouter(db).ServeHTTP(recorder, request)
+	newTestApplication(db).routes().ServeHTTP(recorder, request)
 
 	response := recorder.Result()
 	defer response.Body.Close()
@@ -74,7 +74,8 @@ func TestGetUserEndpoint(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
 	defer cancel()
 
-	createdUser, err := users.Create(ctx, db, "saad@example.com", "Saad")
+	userModel := &models.UserModel{DB: db}
+	createdUser, err := userModel.Create(ctx, "saad@example.com", "Saad")
 	if err != nil {
 		t.Fatalf("create user for GET test: %v", err)
 	}
@@ -85,7 +86,7 @@ func TestGetUserEndpoint(t *testing.T) {
 		nil,
 	)
 	recorder := httptest.NewRecorder()
-	NewRouter(db).ServeHTTP(recorder, request)
+	newTestApplication(db).routes().ServeHTTP(recorder, request)
 
 	response := recorder.Result()
 	defer response.Body.Close()
@@ -120,7 +121,7 @@ func TestGetUserEndpointRejectsInvalidID(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/users/not-a-number", nil)
 	recorder := httptest.NewRecorder()
 
-	NewRouter(nil).ServeHTTP(recorder, request)
+	newTestApplication(nil).routes().ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusBadRequest)

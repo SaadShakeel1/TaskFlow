@@ -1,17 +1,17 @@
-package users_test
+package models_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
+	"github.com/SaadShakeel1/TaskFlow/internal/models"
 	"github.com/SaadShakeel1/TaskFlow/internal/testutil"
-	"github.com/SaadShakeel1/TaskFlow/internal/users"
 )
 
 const databaseTestTimeout = 5 * time.Second
 
-func TestCreate(t *testing.T) {
+func TestUserModelCreate(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 
 	testutil.ResetUsers(t, db)
@@ -22,7 +22,8 @@ func TestCreate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
 	defer cancel()
 
-	got, err := users.Create(ctx, db, "saad@example.com", "Saad")
+	model := &models.UserModel{DB: db}
+	got, err := model.Create(ctx, "saad@example.com", "Saad")
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}

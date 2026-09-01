@@ -1,4 +1,4 @@
-package api
+package main
 
 import (
 	"encoding/json"
@@ -12,7 +12,7 @@ func TestHealthEndpoint(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/health", nil)
 	recorder := httptest.NewRecorder()
 
-	NewRouter(nil).ServeHTTP(recorder, request)
+	newTestApplication(nil).routes().ServeHTTP(recorder, request)
 
 	response := recorder.Result()
 	defer response.Body.Close()
@@ -40,7 +40,7 @@ func TestGreetingEndpoint(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 
 	recorder := httptest.NewRecorder()
-	NewRouter(nil).ServeHTTP(recorder, request)
+	newTestApplication(nil).routes().ServeHTTP(recorder, request)
 
 	response := recorder.Result()
 	defer response.Body.Close()
@@ -68,7 +68,7 @@ func TestGreetingEndpointRejectsBlankName(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 
 	recorder := httptest.NewRecorder()
-	NewRouter(nil).ServeHTTP(recorder, request)
+	newTestApplication(nil).routes().ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusBadRequest)
@@ -84,7 +84,7 @@ func TestGreetingEndpointRejectsInvalidJSON(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 
 	recorder := httptest.NewRecorder()
-	NewRouter(nil).ServeHTTP(recorder, request)
+	newTestApplication(nil).routes().ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusBadRequest)

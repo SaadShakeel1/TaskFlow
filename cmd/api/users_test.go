@@ -27,7 +27,7 @@ func TestCreateUserEndpoint(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/users",
-		strings.NewReader(`{"email":"saad@example.com","name":"Saad"}`),
+		strings.NewReader(`{"email":"saad@example.com","name":"Saad","password":"correct-password"}`),
 	)
 	request.Header.Set("Content-Type", "application/json")
 
@@ -63,6 +63,64 @@ func TestCreateUserEndpoint(t *testing.T) {
 	}
 }
 
+func TestCreateUserEndpointRejectsInvalidPasswords(t *testing.T) {
+	tests := []struct {
+		name     string
+		password string
+		wantBody string
+	}{
+		{
+			name:     "missing password",
+			password: "",
+			wantBody: "password is required\n",
+		},
+		{
+			name:     "password shorter than 15 characters",
+			password: "too-short",
+			wantBody: "password must contain at least 15 characters\n",
+		},
+		{
+			name:     "password longer than bcrypt limit",
+			password: strings.Repeat("a", maximumPasswordBytes+1),
+			wantBody: "password must not exceed 72 bytes\n",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body, err := json.Marshal(createUserRequest{
+				Email:    "saad@example.com",
+				Name:     "Saad",
+				Password: test.password,
+			})
+			if err != nil {
+				t.Fatalf("marshal request body: %v", err)
+			}
+
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/users",
+				strings.NewReader(string(body)),
+			)
+			recorder := httptest.NewRecorder()
+
+			newTestApplication(nil).routes().ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Errorf(
+					"status code = %d, want %d",
+					recorder.Code,
+					http.StatusBadRequest,
+				)
+			}
+
+			if got := recorder.Body.String(); got != test.wantBody {
+				t.Errorf("response body = %q, want %q", got, test.wantBody)
+			}
+		})
+	}
+}
+
 func TestGetUserEndpoint(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 
@@ -75,7 +133,7 @@ func TestGetUserEndpoint(t *testing.T) {
 	defer cancel()
 
 	userModel := &models.UserModel{DB: db}
-	createdUser, err := userModel.Create(ctx, "saad@example.com", "Saad")
+	createdUser, err := userModel.Create(ctx, "saad@example.com", "Saad", "correct-password")
 	if err != nil {
 		t.Fatalf("create user for GET test: %v", err)
 	}

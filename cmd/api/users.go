@@ -7,13 +7,20 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/SaadShakeel1/TaskFlow/internal/models"
 )
 
+const (
+	minimumPasswordCharacters = 15
+	maximumPasswordBytes      = 72
+)
+
 type createUserRequest struct {
-	Email string `json:"email"`
-	Name  string `json:"name"`
+	Email    string `json:"email"`
+	Name     string `json:"name"`
+	Password string `json:"password"`
 }
 
 type userResponse struct {
@@ -33,6 +40,7 @@ func (app *application) createUserHandler(w http.ResponseWriter, r *http.Request
 
 	email := strings.TrimSpace(request.Email)
 	name := strings.TrimSpace(request.Name)
+	password := request.Password
 
 	if email == "" {
 		app.clientError(w, http.StatusBadRequest, "email is required")
@@ -44,7 +52,22 @@ func (app *application) createUserHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	user, err := app.users.Create(r.Context(), email, name)
+	if password == "" {
+		app.clientError(w, http.StatusBadRequest, "password is required")
+		return
+	}
+
+	if utf8.RuneCountInString(password) < minimumPasswordCharacters {
+		app.clientError(w, http.StatusBadRequest, "password must contain at least 15 characters")
+		return
+	}
+
+	if len(password) > maximumPasswordBytes {
+		app.clientError(w, http.StatusBadRequest, "password must not exceed 72 bytes")
+		return
+	}
+
+	user, err := app.users.Create(r.Context(), email, name, password)
 	if err != nil {
 		if errors.Is(err, models.ErrDuplicateEmail) {
 			app.clientError(w, http.StatusConflict, "email is already registered")

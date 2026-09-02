@@ -11,31 +11,39 @@ import (
 )
 
 type User struct {
-	ID        int64
-	Email     string
-	Name      string
-	CreatedAt time.Time
+	ID              int64
+	Email           string
+	Name            string
+	Password        Password
+	EmailVerifiedAt *time.Time
+	CreatedAt       time.Time
 }
 
 type UserModel struct {
 	DB *sql.DB
 }
 
-func (m *UserModel) Create(ctx context.Context, email, name string) (User, error) {
-	const query = `
-		INSERT INTO users (email, name)
-		VALUES ($1, $2)
-		RETURNING id, email, name, created_at
-	`
-
+func (m *UserModel) Create(ctx context.Context, email, name, plaintextPassword string) (User, error) {
 	var user User
 
-	err := m.DB.QueryRowContext(ctx, query, email, name).Scan(
+	if err := user.Password.Set(plaintextPassword); err != nil {
+		return User{}, fmt.Errorf("set user password: %w", err)
+	}
+
+	const query = `
+		INSERT INTO users (email, name,password_hash)
+		VALUES ($1, $2, $3)
+		RETURNING id, email, name, email_verified_at, created_at
+	`
+
+	err := m.DB.QueryRowContext(ctx, query, email, name, user.Password.hash).Scan(
 		&user.ID,
 		&user.Email,
 		&user.Name,
+		&user.EmailVerifiedAt,
 		&user.CreatedAt,
 	)
+
 	if err != nil {
 		var postgresError *pgconn.PgError
 		if errors.As(err, &postgresError) && postgresError.Code == "23505" {

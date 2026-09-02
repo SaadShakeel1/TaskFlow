@@ -23,7 +23,7 @@ func TestUserModelCreate(t *testing.T) {
 	defer cancel()
 
 	model := &models.UserModel{DB: db}
-	got, err := model.Create(ctx, "saad@example.com", "Saad")
+	got, err := model.Create(ctx, "saad@example.com", "Saad", "correct-password")
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -42,5 +42,22 @@ func TestUserModelCreate(t *testing.T) {
 
 	if got.CreatedAt.IsZero() {
 		t.Error("CreatedAt is zero, want a PostgreSQL-generated timestamp")
+	}
+
+	matches, err := got.Password.Matches("correct-password")
+
+	if err != nil {
+		t.Fatalf("match created user's password: %v", err)
+	}
+
+	if !matches {
+		t.Error("created user's password did not match")
+	}
+
+	if got.EmailVerifiedAt != nil {
+		t.Errorf(
+			"EmailVerifiedAt = %v, want nil for a new user",
+			got.EmailVerifiedAt,
+		)
 	}
 }

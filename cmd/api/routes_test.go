@@ -94,3 +94,22 @@ func TestGreetingEndpointRejectsInvalidJSON(t *testing.T) {
 		t.Errorf("response body = %q, want %q", got, "request body must be valid JSON\n")
 	}
 }
+
+func TestVerifyEmailPageEndpoint(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/verify-email?token=test-token", nil)
+	recorder := httptest.NewRecorder()
+
+	newTestApplication(nil).routes().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	if got := recorder.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want %q", got, "text/html; charset=utf-8")
+	}
+
+	if !strings.Contains(recorder.Body.String(), `fetch("/users/verify-email"`) {
+		t.Error("verification page does not call the verification API")
+	}
+}

@@ -14,6 +14,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+  mailpit:
+    image: axllent/mailpit:v1.31.0
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
 
 volumes:
   taskflow_postgres_data:

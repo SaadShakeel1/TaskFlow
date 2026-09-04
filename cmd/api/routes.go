@@ -9,6 +9,8 @@ func (app *application) routes() http.Handler {
 	mux.HandleFunc("POST /greet", app.greetingHandler)
 	mux.HandleFunc("POST /users", app.createUserHandler)
 	mux.HandleFunc("GET /users/{id}", app.getUserHandler)
+	mux.HandleFunc("POST /users/verify-email", app.verifyEmailHandler)
+	mux.HandleFunc("GET /verify-email", app.verifyEmailPageHandler)
 
 	return app.recoverPanic(app.logRequest(secureHeaders(mux)))
 }

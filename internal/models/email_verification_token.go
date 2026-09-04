@@ -38,6 +38,39 @@ func (m *EmailVerificationTokenModel) Upsert(ctx context.Context, token EmailVer
 	return nil
 }
 
+func (m *EmailVerificationTokenModel) Verify(ctx context.Context, plaintext string) error {
+	hash := sha256.Sum256([]byte(plaintext))
+
+	const query = `
+		WITH consumed_token AS (
+			DELETE FROM email_verification_tokens
+			WHERE token_hash = $1
+			AND expires_at > NOW()
+			RETURNING user_id
+		)
+		UPDATE users
+		SET email_verified_at = NOW()
+		WHERE id = (SELECT user_id FROM consumed_token)
+			AND email_verified_at IS NULL
+	`
+
+	result, err := m.DB.ExecContext(ctx, query, hash[:])
+	if err != nil {
+		return fmt.Errorf("verify email: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get verified user count: %w", err)
+	}
+
+	if rowsAffected != 1 {
+		return ErrInvalidEmailVerificationToken
+	}
+
+	return nil
+}
+
 type EmailVerificationToken struct {
 	Plaintext string
 	Hash      []byte

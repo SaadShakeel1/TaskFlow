@@ -3,24 +3,36 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/SaadShakeel1/TaskFlow/internal/mailer"
 	"github.com/SaadShakeel1/TaskFlow/internal/models"
 )
 
 const (
 	minimumPasswordCharacters = 15
 	maximumPasswordBytes      = 72
+	emailVerificationTokenTTL = 24 * time.Hour
 )
 
 type createUserRequest struct {
 	Email    string `json:"email"`
 	Name     string `json:"name"`
 	Password string `json:"password"`
+}
+
+type verifyEmailRequest struct {
+	Token string `json:"token"`
+}
+
+type verifyEmailResponse struct {
+	Message string `json:"message"`
 }
 
 type userResponse struct {
@@ -78,7 +90,68 @@ func (app *application) createUserHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	token, err := models.NewEmailVerificationToken(user.ID, emailVerificationTokenTTL)
+	if err != nil {
+		app.serverError(w, err)
+		return
+	}
+
+	if err := app.verificationTokens.Upsert(r.Context(), token); err != nil {
+		app.serverError(w, err)
+		return
+	}
+
+	verificationURL := fmt.Sprintf(
+		"%s/verify-email?token=%s",
+		strings.TrimRight(app.config.appURL, "/"),
+		url.QueryEscape(token.Plaintext),
+	)
+
+	if err := app.mailer.Send(mailer.Email{
+		To:      user.Email,
+		Subject: "Verify your TaskFlow email address",
+		Body: fmt.Sprintf(
+			"Welcome to TaskFlow!\n\nVerify your email address by opening this link:\n\n%s\n\nThis link expires in 24 hours.",
+			verificationURL,
+		),
+	}); err != nil {
+		app.serverError(w, err)
+		return
+	}
 	app.writeUserResponse(w, user, http.StatusCreated)
+}
+
+func (app *application) verifyEmailHandler(w http.ResponseWriter, r *http.Request) {
+	var request verifyEmailRequest
+
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		app.clientError(w, http.StatusBadRequest, "request body must be valid JSON")
+		return
+	}
+
+	token := strings.TrimSpace(request.Token)
+
+	if token == "" {
+		app.clientError(w, http.StatusBadRequest, "verification token is required")
+		return
+	}
+
+	if err := app.verificationTokens.Verify(r.Context(), token); err != nil {
+		if errors.Is(err, models.ErrInvalidEmailVerificationToken) {
+			app.clientError(w, http.StatusBadRequest, "verification token is invalid or expired")
+			return
+		}
+		app.serverError(w, err)
+		return
+	}
+
+	response := verifyEmailResponse{
+		Message: "email verified",
+	}
+
+	if err := app.writeJSON(w, http.StatusOK, response); err != nil {
+		app.errorLog.Printf("encode verification response: %v", err)
+	}
 }
 
 func (app *application) getUserHandler(w http.ResponseWriter, r *http.Request) {

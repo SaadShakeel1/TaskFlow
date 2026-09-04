@@ -19,7 +19,7 @@ func OpenTestDB(t testing.TB) *sql.DB {
 
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 	if databaseURL == "" {
-		t.Skip("TEST_DATABASE_URL is not set")
+		t.Fatal("TEST_DATABASE_URL must be set")
 	}
 
 	db, err := database.Open(databaseURL)

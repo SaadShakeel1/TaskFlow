@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"testing"
 	"time"
 
@@ -195,5 +196,80 @@ func TestNewEmailVerificationTokenRejectsInvalidInput(t *testing.T) {
 				t.Error("expected an error, got nil")
 			}
 		})
+	}
+}
+
+func TestEmailVerificationTokenModelVerify(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+
+	testutil.ResetUsers(t, db)
+	t.Cleanup(func() {
+		testutil.ResetUsers(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	userModel := &models.UserModel{DB: db}
+	createdUser, err := userModel.Create(
+		ctx,
+		"email_verify@test.com",
+		"Email Verify",
+		"correct-password",
+	)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	tokenModel := &models.EmailVerificationTokenModel{DB: db}
+	token, err := models.NewEmailVerificationToken(createdUser.ID, tokenTTL)
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	// Store the token before trying to verify it.
+	if err := tokenModel.Upsert(ctx, token); err != nil {
+		t.Fatalf("store token: %v", err)
+	}
+
+	if err := tokenModel.Verify(ctx, token.Plaintext); err != nil {
+		t.Fatalf("verify token: %v", err)
+	}
+
+	// A pointer represents a nullable SQL timestamp.
+	var verifiedAt *time.Time
+	err = db.QueryRowContext(
+		ctx,
+		`SELECT email_verified_at FROM users WHERE id = $1`,
+		createdUser.ID,
+	).Scan(&verifiedAt)
+	if err != nil {
+		t.Fatalf("query verified user: %v", err)
+	}
+
+	if verifiedAt == nil {
+		t.Error("email_verified_at is nil after verification")
+	}
+
+	var tokenCount int
+	err = db.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM email_verification_tokens WHERE user_id = $1`,
+		createdUser.ID,
+	).Scan(&tokenCount)
+	if err != nil {
+		t.Fatalf("count verification tokens: %v", err)
+	}
+
+	if tokenCount != 0 {
+		t.Errorf("token count = %d, want 0", tokenCount)
+	}
+
+	err = tokenModel.Verify(ctx, token.Plaintext)
+	if !errors.Is(err, models.ErrInvalidEmailVerificationToken) {
+		t.Errorf(
+			"second verification error = %v, want ErrInvalidEmailVerificationToken",
+			err,
+		)
 	}
 }

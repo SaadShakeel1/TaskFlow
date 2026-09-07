@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"testing"
 	"time"
 
@@ -118,5 +119,111 @@ func TestSessionModelCreate(t *testing.T) {
 		gotExpiresAt.After(session.ExpiresAt.Add(time.Second)) {
 		t.Errorf("stored expiry = %v, want approximately %v",
 			gotExpiresAt, session.ExpiresAt)
+	}
+}
+
+func TestSessionModelGetUserByToken(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetUsers(t, db)
+
+	t.Cleanup(func() {
+		testutil.ResetUsers(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		databaseTestTimeout,
+	)
+	defer cancel()
+
+	userModel := &models.UserModel{DB: db}
+	createdUser, err := userModel.Create(
+		ctx,
+		"saad@example.com",
+		"Saad",
+		"correct-password",
+	)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	session, err := models.NewSession(createdUser.ID, sessionTTL)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	sessionModel := &models.SessionModel{DB: db}
+	if err := sessionModel.Create(ctx, session); err != nil {
+		t.Fatalf("store session: %v", err)
+	}
+
+	user, err := sessionModel.GetUserByToken(ctx, session.Plaintext)
+	if err != nil {
+		t.Fatalf("get user by session token: %v", err)
+	}
+
+	if user.ID != createdUser.ID {
+		t.Errorf("user ID = %d, want %d", user.ID, createdUser.ID)
+	}
+
+	if user.Email != createdUser.Email {
+		t.Errorf("user email = %q, want %q", user.Email, createdUser.Email)
+	}
+
+	if user.Name != createdUser.Name {
+		t.Errorf("user name = %q, want %q", user.Name, createdUser.Name)
+	}
+}
+
+func TestSessionModelGetUserByTokenRejectsExpiredSession(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetUsers(t, db)
+
+	t.Cleanup(func() {
+		testutil.ResetUsers(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		databaseTestTimeout,
+	)
+	defer cancel()
+
+	users := &models.UserModel{DB: db}
+	user, err := users.Create(
+		ctx,
+		"saad@example.com",
+		"Saad",
+		"correct-password",
+	)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	session, err := models.NewSession(user.ID, sessionTTL)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	sessions := &models.SessionModel{DB: db}
+	if err := sessions.Create(ctx, session); err != nil {
+		t.Fatalf("store session: %v", err)
+	}
+
+	_, err = db.ExecContext(
+		ctx,
+		`UPDATE sessions
+			SET created_at = NOW() - INTERVAL '2 hours',
+				expires_at = NOW() - INTERVAL '1 hour'
+			WHERE token_hash = $1`,
+		session.Hash,
+	)
+	if err != nil {
+		t.Fatalf("expire session: %v", err)
+	}
+
+	_, err = sessions.GetUserByToken(ctx, session.Plaintext)
+	if !errors.Is(err, models.ErrNoRecord) {
+		t.Errorf("error = %v, want models.ErrNoRecord", err)
 	}
 }

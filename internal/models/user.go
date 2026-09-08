@@ -81,3 +81,31 @@ func (m *UserModel) GetByID(ctx context.Context, id int64) (User, error) {
 
 	return user, nil
 }
+
+func (m *UserModel) GetByEmail(ctx context.Context, email string) (User, error) {
+	const query = `
+		SELECT id, email, name, password_hash, email_verified_at, created_at
+		FROM users
+		WHERE email = $1
+	`
+
+	var user User
+
+	err := m.DB.QueryRowContext(ctx, query, email).Scan(
+		&user.ID,
+		&user.Email,
+		&user.Name,
+		&user.Password.hash,
+		&user.EmailVerifiedAt,
+		&user.CreatedAt,
+	)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return User{}, ErrNoRecord
+		}
+		return User{}, fmt.Errorf("get user by email: %w", err)
+	}
+
+	return user, nil
+}

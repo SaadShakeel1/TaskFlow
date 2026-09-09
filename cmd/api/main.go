@@ -24,10 +24,12 @@ type mailerConfig struct {
 }
 
 type config struct {
-	addr        string
-	appURL      string
-	databaseURL string
-	mailer      mailerConfig
+	addr                string
+	appURL              string
+	databaseURL         string
+	mailer              mailerConfig
+	sessionTTL          time.Duration
+	sessionCookieSecure bool
 }
 
 type application struct {
@@ -37,6 +39,7 @@ type application struct {
 	infoLog            *log.Logger
 	users              *models.UserModel
 	verificationTokens *models.EmailVerificationTokenModel
+	sessions           *models.SessionModel
 	mailer             mailer.Sender
 }
 
@@ -57,6 +60,8 @@ func main() {
 	flag.StringVar(&cfg.mailer.smtpUsername, "smtp-username", os.Getenv("SMTP_USERNAME"), "SMTP username")
 	flag.StringVar(&cfg.mailer.smtpPassword, "smtp-password", os.Getenv("SMTP_PASSWORD"), "SMTP password")
 	flag.StringVar(&cfg.mailer.from, "mail-from", os.Getenv("MAIL_FROM"), "Email sender address")
+	flag.DurationVar(&cfg.sessionTTL, "session-ttl", 7*24*time.Hour, "Session lifetime")
+	flag.BoolVar(&cfg.sessionCookieSecure, "session-cookie-secure", false, "Require HTTPS for session cookie")
 	flag.Parse()
 
 	if cfg.databaseURL == "" {
@@ -88,6 +93,7 @@ func main() {
 		infoLog:            infoLog,
 		users:              &models.UserModel{DB: db},
 		verificationTokens: &models.EmailVerificationTokenModel{DB: db},
+		sessions:           &models.SessionModel{DB: db},
 		mailer: mailer.New(mailer.Config{
 			SMTPAddress:  cfg.mailer.smtpAddress,
 			SMTPUsername: cfg.mailer.smtpUsername,

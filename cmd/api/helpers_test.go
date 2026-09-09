@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"io"
 	"log"
+	"time"
 
 	"github.com/SaadShakeel1/TaskFlow/internal/mailer"
 	"github.com/SaadShakeel1/TaskFlow/internal/models"
@@ -22,6 +23,8 @@ func newTestApplication(db *sql.DB) *application {
 		infoLog:            log.New(io.Discard, "", 0),
 		users:              &models.UserModel{DB: db},
 		verificationTokens: &models.EmailVerificationTokenModel{DB: db},
+		sessions:           &models.SessionModel{DB: db},
 		mailer:             discardMailer{},
+		config:             config{sessionTTL: 7 * 24 * time.Hour},
 	}
 }

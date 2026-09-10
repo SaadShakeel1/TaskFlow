@@ -187,3 +187,13 @@ func (app *application) writeUserResponse(w http.ResponseWriter, user models.Use
 		app.errorLog.Printf("encode user response: %v", err)
 	}
 }
+
+func (app *application) currentUserHandler(w http.ResponseWriter, r *http.Request) {
+	user, ok := r.Context().Value(userContextKey).(models.User)
+
+	if !ok {
+		app.serverError(w, errors.New("authenticated user missing from context"))
+		return
+	}
+	app.writeUserResponse(w, user, http.StatusOK)
+}

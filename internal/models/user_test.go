@@ -15,9 +15,9 @@ const databaseTestTimeout = 5 * time.Second
 func TestUserModelCreate(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 
-	testutil.ResetUsers(t, db)
+	testutil.ResetDatabase(t, db)
 	t.Cleanup(func() {
-		testutil.ResetUsers(t, db)
+		testutil.ResetDatabase(t, db)
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
@@ -66,8 +66,8 @@ func TestUserModelCreate(t *testing.T) {
 func TestUserGetByEmail(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 
-	testutil.ResetUsers(t, db)
-	t.Cleanup(func() { testutil.ResetUsers(t, db) })
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
 
 	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
 
@@ -121,8 +121,8 @@ func TestUserGetByEmail(t *testing.T) {
 func TestUserGetByEmailNotFound(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 
-	testutil.ResetUsers(t, db)
-	t.Cleanup(func() { testutil.ResetUsers(t, db) })
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
 
 	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
 

@@ -18,8 +18,8 @@ const tokenTTL = 24 * time.Hour
 func TestEmailVerificationModelUpsert(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 
-	testutil.ResetUsers(t, db)
-	t.Cleanup(func() { testutil.ResetUsers(t, db) })
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
 
 	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
 	defer cancel()
@@ -202,9 +202,9 @@ func TestNewEmailVerificationTokenRejectsInvalidInput(t *testing.T) {
 func TestEmailVerificationTokenModelVerify(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 
-	testutil.ResetUsers(t, db)
+	testutil.ResetDatabase(t, db)
 	t.Cleanup(func() {
-		testutil.ResetUsers(t, db)
+		testutil.ResetDatabase(t, db)
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)

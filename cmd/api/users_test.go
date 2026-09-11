@@ -30,9 +30,9 @@ func (m *recordingMailer) Send(email mailer.Email) error {
 func TestCreateUserEndpointSendsVerificationEmail(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 
-	testutil.ResetUsers(t, db)
+	testutil.ResetDatabase(t, db)
 	t.Cleanup(func() {
-		testutil.ResetUsers(t, db)
+		testutil.ResetDatabase(t, db)
 	})
 
 	emailSender := &recordingMailer{}
@@ -73,9 +73,9 @@ func TestCreateUserEndpointSendsVerificationEmail(t *testing.T) {
 func TestCreateUserEndpoint(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 
-	testutil.ResetUsers(t, db)
+	testutil.ResetDatabase(t, db)
 	t.Cleanup(func() {
-		testutil.ResetUsers(t, db)
+		testutil.ResetDatabase(t, db)
 	})
 
 	request := httptest.NewRequest(
@@ -178,9 +178,9 @@ func TestCreateUserEndpointRejectsInvalidPasswords(t *testing.T) {
 func TestGetUserEndpoint(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 
-	testutil.ResetUsers(t, db)
+	testutil.ResetDatabase(t, db)
 	t.Cleanup(func() {
-		testutil.ResetUsers(t, db)
+		testutil.ResetDatabase(t, db)
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
@@ -247,9 +247,9 @@ func TestGetUserEndpointRejectsInvalidID(t *testing.T) {
 func TestVerifyEmailEndpoint(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 
-	testutil.ResetUsers(t, db)
+	testutil.ResetDatabase(t, db)
 	t.Cleanup(func() {
-		testutil.ResetUsers(t, db)
+		testutil.ResetDatabase(t, db)
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
@@ -325,10 +325,10 @@ func TestCurrentUserEndpointRequiresAuthentication(t *testing.T) {
 
 func TestCurrentUserEndpoint(t *testing.T) {
 	db := testutil.OpenTestDB(t)
-	testutil.ResetUsers(t, db)
+	testutil.ResetDatabase(t, db)
 
 	t.Cleanup(func() {
-		testutil.ResetUsers(t, db)
+		testutil.ResetDatabase(t, db)
 	})
 
 	ctx, cancel := context.WithTimeout(
@@ -403,10 +403,10 @@ func TestCurrentUserEndpoint(t *testing.T) {
 
 func TestCurrentUserEndpointRejectsInvalidSession(t *testing.T) {
 	db := testutil.OpenTestDB(t)
-	testutil.ResetUsers(t, db)
+	testutil.ResetDatabase(t, db)
 
 	t.Cleanup(func() {
-		testutil.ResetUsers(t, db)
+		testutil.ResetDatabase(t, db)
 	})
 
 	request := httptest.NewRequest(http.MethodGet, "/me", nil)

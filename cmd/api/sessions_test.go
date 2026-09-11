@@ -15,8 +15,8 @@ import (
 func TestCreateSessionEndpoint(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 
-	testutil.ResetUsers(t, db)
-	t.Cleanup(func() { testutil.ResetUsers(t, db) })
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
 
 	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
 	defer cancel()
@@ -94,10 +94,10 @@ func TestCreateSessionEndpoint(t *testing.T) {
 
 func TestCreateSessionEndpointRejectsInvalidCredentials(t *testing.T) {
 	db := testutil.OpenTestDB(t)
-	testutil.ResetUsers(t, db)
+	testutil.ResetDatabase(t, db)
 
 	t.Cleanup(func() {
-		testutil.ResetUsers(t, db)
+		testutil.ResetDatabase(t, db)
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
@@ -181,8 +181,8 @@ func TestCreateSessionEndpointRejectsInvalidCredentials(t *testing.T) {
 func TestCreateSessionEndpointRejectsUnverifiedUser(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 
-	testutil.ResetUsers(t, db)
-	t.Cleanup(func() { testutil.ResetUsers(t, db) })
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
 
 	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
 	defer cancel()
@@ -278,10 +278,10 @@ func TestCreateSessionEndpointRejectsInvalidRequests(t *testing.T) {
 
 func TestDeleteCurrentSessionEndpoint(t *testing.T) {
 	db := testutil.OpenTestDB(t)
-	testutil.ResetUsers(t, db)
+	testutil.ResetDatabase(t, db)
 
 	t.Cleanup(func() {
-		testutil.ResetUsers(t, db)
+		testutil.ResetDatabase(t, db)
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)

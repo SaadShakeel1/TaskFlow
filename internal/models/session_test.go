@@ -63,8 +63,8 @@ func TestNewSession(t *testing.T) {
 func TestSessionModelCreate(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 
-	testutil.ResetUsers(t, db)
-	t.Cleanup(func() { testutil.ResetUsers(t, db) })
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
 
 	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
 	defer cancel()
@@ -124,10 +124,10 @@ func TestSessionModelCreate(t *testing.T) {
 
 func TestSessionModelGetUserByToken(t *testing.T) {
 	db := testutil.OpenTestDB(t)
-	testutil.ResetUsers(t, db)
+	testutil.ResetDatabase(t, db)
 
 	t.Cleanup(func() {
-		testutil.ResetUsers(t, db)
+		testutil.ResetDatabase(t, db)
 	})
 
 	ctx, cancel := context.WithTimeout(
@@ -177,10 +177,10 @@ func TestSessionModelGetUserByToken(t *testing.T) {
 
 func TestSessionModelGetUserByTokenRejectsExpiredSession(t *testing.T) {
 	db := testutil.OpenTestDB(t)
-	testutil.ResetUsers(t, db)
+	testutil.ResetDatabase(t, db)
 
 	t.Cleanup(func() {
-		testutil.ResetUsers(t, db)
+		testutil.ResetDatabase(t, db)
 	})
 
 	ctx, cancel := context.WithTimeout(
@@ -230,10 +230,10 @@ func TestSessionModelGetUserByTokenRejectsExpiredSession(t *testing.T) {
 
 func TestSessionModelDeleteByToken(t *testing.T) {
 	db := testutil.OpenTestDB(t)
-	testutil.ResetUsers(t, db)
+	testutil.ResetDatabase(t, db)
 
 	t.Cleanup(func() {
-		testutil.ResetUsers(t, db)
+		testutil.ResetDatabase(t, db)
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)

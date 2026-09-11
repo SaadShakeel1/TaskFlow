@@ -99,3 +99,18 @@ func (m *SessionModel) GetUserByToken(ctx context.Context, plaintext string) (Us
 
 	return user, nil
 }
+
+func (m *SessionModel) DeleteByToken(ctx context.Context, plaintext string) error {
+	hash := sha256.Sum256([]byte(plaintext))
+
+	const query = `
+		DELETE FROM sessions
+		WHERE token_hash = $1
+	`
+
+	if _, err := m.DB.ExecContext(ctx, query, hash[:]); err != nil {
+		return fmt.Errorf("delete session by token: %w", err)
+	}
+
+	return nil
+}

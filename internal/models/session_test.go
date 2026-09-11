@@ -227,3 +227,44 @@ func TestSessionModelGetUserByTokenRejectsExpiredSession(t *testing.T) {
 		t.Errorf("error = %v, want models.ErrNoRecord", err)
 	}
 }
+
+func TestSessionModelDeleteByToken(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetUsers(t, db)
+
+	t.Cleanup(func() {
+		testutil.ResetUsers(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	userModel := &models.UserModel{DB: db}
+	createdUser, err := userModel.Create(ctx, "saad@example.com", "Saad", "correct-password")
+
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	sessionModel := &models.SessionModel{DB: db}
+	createdSession, err := models.NewSession(createdUser.ID, sessionTTL)
+
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	if err := sessionModel.Create(ctx, createdSession); err != nil {
+		t.Fatalf("store session: %v", err)
+	}
+
+	if err := sessionModel.DeleteByToken(ctx, createdSession.Plaintext); err != nil {
+		t.Fatalf("delete session: %v", err)
+	}
+
+	_, err = sessionModel.GetUserByToken(ctx, createdSession.Plaintext)
+
+	if !errors.Is(err, models.ErrNoRecord) {
+		t.Errorf("error = %v, want models.ErrNoRecord", err)
+	}
+
+}

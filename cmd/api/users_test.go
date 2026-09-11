@@ -308,3 +308,129 @@ func TestVerifyEmailEndpoint(t *testing.T) {
 		t.Errorf("message = %q, want %q", body.Message, "email verified")
 	}
 }
+
+func TestCurrentUserEndpointRequiresAuthentication(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/me", nil)
+	recorder := httptest.NewRecorder()
+
+	newTestApplication(nil).routes().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+
+	if got := recorder.Body.String(); got != "authentication required\n" {
+		t.Errorf("response body = %q, want %q", got, "authentication required\n")
+	}
+}
+
+func TestCurrentUserEndpoint(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetUsers(t, db)
+
+	t.Cleanup(func() {
+		testutil.ResetUsers(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		databaseTestTimeout,
+	)
+	defer cancel()
+
+	app := newTestApplication(db)
+
+	user, err := app.users.Create(
+		ctx,
+		"saad@example.com",
+		"Saad",
+		"correct-password",
+	)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	session, err := models.NewSession(user.ID, app.config.sessionTTL)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	if err := app.sessions.Create(ctx, session); err != nil {
+		t.Fatalf("store session: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/me", nil)
+
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: session.Plaintext,
+	})
+
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, request)
+
+	response := recorder.Result()
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		t.Errorf(
+			"status code = %d, want %d",
+			response.StatusCode,
+			http.StatusOK,
+		)
+	}
+
+	if got := response.Header.Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type = %q, want %q", got, "application/json")
+	}
+
+	var body userResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response body: %v", err)
+	}
+
+	if body.ID != user.ID {
+		t.Errorf("ID = %d, want %d", body.ID, user.ID)
+	}
+
+	if body.Email != user.Email {
+		t.Errorf("Email = %q, want %q", body.Email, user.Email)
+	}
+
+	if body.Name != user.Name {
+		t.Errorf("Name = %q, want %q", body.Name, user.Name)
+	}
+}
+
+func TestCurrentUserEndpointRejectsInvalidSession(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetUsers(t, db)
+
+	t.Cleanup(func() {
+		testutil.ResetUsers(t, db)
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/me", nil)
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: "not-a-real-session-token",
+	})
+
+	recorder := httptest.NewRecorder()
+	newTestApplication(db).routes().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Errorf(
+			"status code = %d, want %d",
+			recorder.Code,
+			http.StatusUnauthorized,
+		)
+	}
+
+	if got := recorder.Body.String(); got != "authentication required\n" {
+		t.Errorf(
+			"response body = %q, want %q",
+			got,
+			"authentication required\n",
+		)
+	}
+}

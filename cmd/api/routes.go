@@ -12,6 +12,7 @@ func (app *application) routes() http.Handler {
 	mux.HandleFunc("POST /users/verify-email", app.verifyEmailHandler)
 	mux.HandleFunc("POST /sessions", app.createSessionHandler)
 	mux.HandleFunc("GET /verify-email", app.verifyEmailPageHandler)
-
+	mux.Handle("GET /me", app.requireAuthentication(http.HandlerFunc(app.currentUserHandler)))
+	mux.Handle("DELETE /sessions/current", app.requireAuthentication(http.HandlerFunc(app.deleteCurrentSessionHandler)))
 	return app.recoverPanic(app.logRequest(secureHeaders(mux)))
 }

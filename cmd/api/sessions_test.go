@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/SaadShakeel1/TaskFlow/internal/models"
 	"github.com/SaadShakeel1/TaskFlow/internal/testutil"
 )
 
@@ -271,5 +273,76 @@ func TestCreateSessionEndpointRejectsInvalidRequests(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestDeleteCurrentSessionEndpoint(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetUsers(t, db)
+
+	t.Cleanup(func() {
+		testutil.ResetUsers(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+
+	user, err := app.users.Create(ctx, "saad@example.com", "Saad", "correct-password")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	session, err := models.NewSession(user.ID, app.config.sessionTTL)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	if err := app.sessions.Create(ctx, session); err != nil {
+		t.Fatalf("store session: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodDelete, "/sessions/current", nil)
+
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: session.Plaintext,
+	})
+
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, request)
+
+	response := recorder.Result()
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusNoContent {
+		t.Errorf(
+			"status code = %d, want %d",
+			response.StatusCode,
+			http.StatusNoContent,
+		)
+	}
+
+	cookies := response.Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookie count = %d, want 1", len(cookies))
+	}
+
+	if cookies[0].Name != sessionCookieName {
+		t.Errorf(
+			"cookie name = %q, want %q",
+			cookies[0].Name,
+			sessionCookieName,
+		)
+	}
+
+	if cookies[0].MaxAge != -1 {
+		t.Errorf("cookie MaxAge = %d, want -1", cookies[0].MaxAge)
+	}
+
+	_, err = app.sessions.GetUserByToken(ctx, session.Plaintext)
+	if !errors.Is(err, models.ErrNoRecord) {
+		t.Errorf("error = %v, want models.ErrNoRecord", err)
 	}
 }

@@ -1,9 +1,39 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
+
+	"github.com/SaadShakeel1/TaskFlow/internal/models"
 )
+
+type contextKey string
+
+const userContextKey contextKey = "user"
+
+func (app *application) requireAuthentication(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(sessionCookieName)
+		if err != nil {
+			app.clientError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+
+		user, err := app.sessions.GetUserByToken(r.Context(), cookie.Value)
+		if err != nil {
+			if errors.Is(err, models.ErrNoRecord) {
+				app.clientError(w, http.StatusUnauthorized, "authentication required")
+				return
+			}
+			app.serverError(w, err)
+			return
+		}
+		ctx := context.WithValue(r.Context(), userContextKey, user)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
 
 func (app *application) recoverPanic(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

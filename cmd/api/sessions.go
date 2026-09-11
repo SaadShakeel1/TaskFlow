@@ -57,6 +57,7 @@ func (app *application) createSessionHandler(w http.ResponseWriter, r *http.Requ
 
 	if !matches {
 		app.clientError(w, http.StatusUnauthorized, "invalid email or password")
+		return
 	}
 
 	if user.EmailVerifiedAt == nil {
@@ -87,5 +88,31 @@ func (app *application) createSessionHandler(w http.ResponseWriter, r *http.Requ
 		SameSite: http.SameSiteLaxMode,
 	})
 
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (app *application) deleteCurrentSessionHandler(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie(sessionCookieName)
+
+	if err != nil {
+		app.clientError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	if err := app.sessions.DeleteByToken(r.Context(), cookie.Value); err != nil {
+		app.serverError(w, err)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    "",
+		Path:     "/",
+		Expires:  time.Unix(1, 0),
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   app.config.sessionCookieSecure,
+		SameSite: http.SameSiteLaxMode,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -27,6 +27,13 @@ type Project struct {
 	UpdatedAt   time.Time
 }
 
+type ProjectUpdate struct {
+	Name        string
+	Description string
+	Status      ProjectStatus
+	TargetDate  *time.Time
+}
+
 type ProjectModel struct {
 	DB *sql.DB
 }
@@ -155,4 +162,32 @@ func (m *ProjectModel) DeleteByIDForUser(ctx context.Context, projectID, userID 
 	}
 
 	return nil
+}
+
+func (m *ProjectModel) UpdateByIDForUser(ctx context.Context, projectID int64, userID int64, update ProjectUpdate) (Project, error) {
+	const query = `
+		UPDATE projects
+		SET name = $1,
+			description = $2,
+			status = $3,
+			target_date = $4,
+			updated_at = NOW()
+		WHERE id = $5 AND user_id = $6
+		RETURNING id, user_id, name, description, status,
+			target_date, created_at, updated_at
+	`
+
+	var project Project
+
+	err := m.DB.QueryRowContext(ctx, query, update.Name, update.Description, update.Status, update.TargetDate, projectID, userID).Scan(
+		&project.ID, &project.UserID, &project.Name, &project.Description, &project.Status, &project.TargetDate, &project.CreatedAt, &project.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Project{}, ErrNoRecord
+		}
+		return Project{}, fmt.Errorf("update project by ID for user: %w", err)
+	}
+
+	return project, nil
 }

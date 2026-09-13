@@ -305,3 +305,128 @@ func TestProjectModelDeleteByIDForUser(t *testing.T) {
 		t.Errorf("error = %v, want models.ErrNoRecord", err)
 	}
 }
+
+func TestProjectModelUpdateByIDForUser(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	userModel := &models.UserModel{DB: db}
+	user, err := userModel.Create(ctx, "owner@example.com", "Owner", "correct-password")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	projectModel := &models.ProjectModel{DB: db}
+	created, err := projectModel.Create(ctx, user.ID, "Original Project", "Original description", nil)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	targetDate := time.Date(2026, time.December, 31, 0, 0, 0, 0, time.UTC)
+
+	update := models.ProjectUpdate{
+		Name:        "Updated Project",
+		Description: "Updated description",
+		Status:      models.ProjectStatusCompleted,
+		TargetDate:  &targetDate,
+	}
+
+	got, err := projectModel.UpdateByIDForUser(ctx, created.ID, user.ID, update)
+	if err != nil {
+		t.Fatalf("update project: %v", err)
+	}
+
+	if got.ID != created.ID {
+		t.Errorf("ID = %d, want %d", got.ID, created.ID)
+	}
+
+	if got.UserID != user.ID {
+		t.Errorf("UserID = %d, want %d", got.UserID, user.ID)
+	}
+
+	if got.Name != update.Name {
+		t.Errorf("Name = %q, want %q", got.Name, update.Name)
+	}
+
+	if got.Description != update.Description {
+		t.Errorf("Description = %q, want %q", got.Description, update.Description)
+	}
+
+	if got.Status != update.Status {
+		t.Errorf("Status = %q, want %q", got.Status, update.Status)
+	}
+
+	if got.TargetDate == nil {
+		t.Fatal("TargetDate = nil, want updated target date")
+	}
+
+	if got.TargetDate.Format(time.DateOnly) != targetDate.Format(time.DateOnly) {
+		t.Errorf("TargetDate = %s, want %s",
+			got.TargetDate.Format(time.DateOnly),
+			targetDate.Format(time.DateOnly),
+		)
+	}
+
+	if got.CreatedAt.IsZero() {
+		t.Error("CreatedAt is zero")
+	}
+
+	if got.UpdatedAt.IsZero() {
+		t.Error("UpdatedAt is zero")
+	}
+}
+
+func TestProjectModelMutationsRejectOtherUser(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	userModel := &models.UserModel{DB: db}
+
+	owner, err := userModel.Create(ctx, "owner@example.com", "Owner", "correct-password")
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+
+	otherUser, err := userModel.Create(ctx, "other@example.com", "Other User", "correct-password")
+	if err != nil {
+		t.Fatalf("create other user: %v", err)
+	}
+
+	projectModel := &models.ProjectModel{DB: db}
+	project, err := projectModel.Create(ctx, owner.ID, "Private Project", "Only its owner may change it", nil)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	_, err = projectModel.UpdateByIDForUser(ctx, project.ID, otherUser.ID, models.ProjectUpdate{
+		Name:        "Stolen Project",
+		Description: "This must not be saved",
+		Status:      models.ProjectStatusArchived,
+		TargetDate:  nil,
+	})
+	if !errors.Is(err, models.ErrNoRecord) {
+		t.Errorf("update error = %v, want models.ErrNoRecord", err)
+	}
+
+	err = projectModel.DeleteByIDForUser(ctx, project.ID, otherUser.ID)
+	if !errors.Is(err, models.ErrNoRecord) {
+		t.Errorf("delete error = %v, want models.ErrNoRecord", err)
+	}
+
+	got, err := projectModel.GetByIDForUser(ctx, project.ID, owner.ID)
+	if err != nil {
+		t.Fatalf("get owner's project: %v", err)
+	}
+
+	if got.Name != project.Name {
+		t.Errorf("Name = %q, want %q", got.Name, project.Name)
+	}
+}

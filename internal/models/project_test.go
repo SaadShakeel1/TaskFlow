@@ -2,6 +2,7 @@ package models_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -102,5 +103,205 @@ func TestProjectModelCreateWithTargetDate(t *testing.T) {
 
 	if got.TargetDate.Format(time.DateOnly) != targetDate.Format(time.DateOnly) {
 		t.Errorf("TargetDate = %s, want %s", got.TargetDate.Format(time.DateOnly), targetDate.Format(time.DateOnly))
+	}
+}
+
+func TestProjectModelGetByIDForUser(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+
+	t.Cleanup(func() {
+		testutil.ResetDatabase(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	userModel := &models.UserModel{DB: db}
+
+	createdUser, err := userModel.Create(ctx, "test@example.com", "Example", "correct-password")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	projectModel := &models.ProjectModel{DB: db}
+
+	createdProject, err := projectModel.Create(ctx, createdUser.ID, "Test Project", "Test project description", nil)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	got, err := projectModel.GetByIDForUser(ctx, createdProject.ID, createdUser.ID)
+	if err != nil {
+		t.Fatalf("get project by ID for user: %v", err)
+	}
+
+	if got.ID != createdProject.ID {
+		t.Errorf("ID = %d, want %d", got.ID, createdProject.ID)
+	}
+
+	if got.UserID != createdUser.ID {
+		t.Errorf("UserID = %d, want %d", got.UserID, createdUser.ID)
+	}
+
+	if got.Name != createdProject.Name {
+		t.Errorf("Name = %q, want %q", got.Name, createdProject.Name)
+	}
+
+	if got.Description != createdProject.Description {
+		t.Errorf("Description = %q, want %q", got.Description, createdProject.Description)
+	}
+
+	if got.Status != createdProject.Status {
+		t.Errorf("Status = %q, want %q", got.Status, createdProject.Status)
+	}
+
+	if got.TargetDate != nil {
+		t.Errorf("TargetDate = %v, want nil", got.TargetDate)
+	}
+
+	if got.CreatedAt.IsZero() {
+		t.Error("CreatedAt is zero")
+	}
+
+	if got.UpdatedAt.IsZero() {
+		t.Error("UpdatedAt is zero")
+	}
+}
+
+func TestProjectModelGetByIDForUserRejectsOtherUser(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+
+	t.Cleanup(func() {
+		testutil.ResetDatabase(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	userModel := &models.UserModel{DB: db}
+
+	owner, err := userModel.Create(ctx, "owner@example.com", "Owner", "correct-password")
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+
+	projectModel := &models.ProjectModel{DB: db}
+
+	project, err := projectModel.Create(ctx, owner.ID, "Private Project", "Only the owner can read this project", nil)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	otherUser, err := userModel.Create(ctx, "other@example.com", "Other User", "correct-password")
+	if err != nil {
+		t.Fatalf("create other user: %v", err)
+	}
+
+	_, err = projectModel.GetByIDForUser(ctx, project.ID, otherUser.ID)
+	if !errors.Is(err, models.ErrNoRecord) {
+		t.Errorf("error = %v, want models.ErrNoRecord", err)
+	}
+}
+
+func TestProjectModelListByUser(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+
+	t.Cleanup(func() {
+		testutil.ResetDatabase(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	userModel := &models.UserModel{DB: db}
+
+	owner, err := userModel.Create(ctx, "owner@example.com", "Owner", "correct-password")
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+
+	otherUser, err := userModel.Create(ctx, "other@example.com", "Other User", "correct-password")
+	if err != nil {
+		t.Fatalf("create other user: %v", err)
+	}
+
+	projectModel := &models.ProjectModel{DB: db}
+
+	_, err = projectModel.Create(ctx, owner.ID, "First Owner Project", "First project", nil)
+	if err != nil {
+		t.Fatalf("create first owner project: %v", err)
+	}
+
+	_, err = projectModel.Create(ctx, owner.ID, "Second Owner Project", "Second project", nil)
+	if err != nil {
+		t.Fatalf("create second owner project: %v", err)
+	}
+
+	_, err = projectModel.Create(ctx, otherUser.ID, "Other User Project", "This project must not appear", nil)
+	if err != nil {
+		t.Fatalf("create other user's project: %v", err)
+	}
+
+	projects, err := projectModel.ListByUser(ctx, owner.ID)
+	if err != nil {
+		t.Fatalf("list projects by user: %v", err)
+	}
+
+	if len(projects) != 2 {
+		t.Fatalf("project count = %d, want 2", len(projects))
+	}
+
+	gotNames := make(map[string]bool)
+
+	for _, project := range projects {
+		if project.UserID != owner.ID {
+			t.Errorf("UserID = %d, want %d", project.UserID, owner.ID)
+		}
+
+		gotNames[project.Name] = true
+	}
+
+	for _, want := range []string{"First Owner Project", "Second Owner Project"} {
+		if !gotNames[want] {
+			t.Errorf("missing project %q", want)
+		}
+	}
+
+	if gotNames["Other User Project"] {
+		t.Error("returned a project owned by another user")
+	}
+}
+
+func TestProjectModelDeleteByIDForUser(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	userModel := &models.UserModel{DB: db}
+	user, err := userModel.Create(ctx, "owner@example.com", "Owner", "correct-password")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	projectModel := &models.ProjectModel{DB: db}
+	project, err := projectModel.Create(ctx, user.ID, "Project To Delete", "This project will be deleted", nil)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	err = projectModel.DeleteByIDForUser(ctx, project.ID, user.ID)
+	if err != nil {
+		t.Fatalf("delete project: %v", err)
+	}
+
+	_, err = projectModel.GetByIDForUser(ctx, project.ID, user.ID)
+	if !errors.Is(err, models.ErrNoRecord) {
+		t.Errorf("error = %v, want models.ErrNoRecord", err)
 	}
 }

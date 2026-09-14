@@ -14,5 +14,6 @@ func (app *application) routes() http.Handler {
 	mux.HandleFunc("GET /verify-email", app.verifyEmailPageHandler)
 	mux.Handle("GET /me", app.requireAuthentication(http.HandlerFunc(app.currentUserHandler)))
 	mux.Handle("DELETE /sessions/current", app.requireAuthentication(http.HandlerFunc(app.deleteCurrentSessionHandler)))
+	mux.Handle("POST /projects", app.requireAuthentication(http.HandlerFunc(app.createProjectHandler)))
 	return app.recoverPanic(app.logRequest(secureHeaders(mux)))
 }

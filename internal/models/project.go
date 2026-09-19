@@ -135,7 +135,14 @@ func (m *ProjectModel) GetByIDForUser(ctx context.Context, projectID, userID int
 		SELECT id, user_id, name, description, status,
 			target_date, created_at, updated_at
 		FROM projects
-		WHERE id = $1 AND user_id = $2
+		WHERE id = $1 AND (
+			user_id = $2 OR EXISTS (
+				SELECT 1
+				FROM project_members
+				WHERE project_members.project_id = projects.id
+					AND project_members.user_id = $2
+			)
+		)
 	`
 
 	var project Project
@@ -194,7 +201,15 @@ func (m *ProjectModel) UpdateByIDForUser(ctx context.Context, projectID int64, u
 			status = $3,
 			target_date = $4,
 			updated_at = NOW()
-		WHERE id = $5 AND user_id = $6
+		WHERE id = $5 AND (
+			user_id = $6 OR EXISTS (
+				SELECT 1
+				FROM project_members
+				WHERE project_members.project_id = projects.id
+					AND project_members.user_id = $6
+					AND project_members.role = 'editor'
+			)
+		)
 		RETURNING id, user_id, name, description, status,
 			target_date, created_at, updated_at
 	`
@@ -227,7 +242,14 @@ func (m *ProjectModel) ListByUser(ctx context.Context, userID int64, options Pro
 		return ProjectList{}, err
 	}
 
-	whereClause := `WHERE user_id = $1`
+	whereClause := `WHERE (
+		user_id = $1 OR EXISTS (
+			SELECT 1
+			FROM project_members
+			WHERE project_members.project_id = projects.id
+				AND project_members.user_id = $1
+		)
+	)`
 	whereArgs := []any{userID}
 
 	if options.Status != nil {

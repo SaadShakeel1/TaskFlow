@@ -40,7 +40,8 @@ type application struct {
 	users              *models.UserModel
 	verificationTokens *models.EmailVerificationTokenModel
 	sessions           *models.SessionModel
-	projects *models.ProjectModel
+	projects           *models.ProjectModel
+	projectMembers     *models.ProjectMemberModel
 	mailer             mailer.Sender
 }
 
@@ -95,7 +96,8 @@ func main() {
 		users:              &models.UserModel{DB: db},
 		verificationTokens: &models.EmailVerificationTokenModel{DB: db},
 		sessions:           &models.SessionModel{DB: db},
-		projects: &models.ProjectModel{DB: db},
+		projects:           &models.ProjectModel{DB: db},
+		projectMembers:     &models.ProjectMemberModel{DB: db},
 		mailer: mailer.New(mailer.Config{
 			SMTPAddress:  cfg.mailer.smtpAddress,
 			SMTPUsername: cfg.mailer.smtpUsername,

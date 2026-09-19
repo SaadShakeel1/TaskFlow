@@ -17,5 +17,9 @@ func (app *application) routes() http.Handler {
 	mux.Handle("POST /projects", app.requireAuthentication(http.HandlerFunc(app.createProjectHandler)))
 	mux.Handle("GET /projects", app.requireAuthentication(http.HandlerFunc(app.listProjectsHandler)))
 	mux.Handle("GET /projects/{id}", app.requireAuthentication(http.HandlerFunc(app.getProjectHandler)))
+	mux.Handle("POST /projects/{id}/members", app.requireAuthentication(http.HandlerFunc(app.createProjectMemberHandler)))
+	mux.Handle("GET /projects/{id}/members", app.requireAuthentication(http.HandlerFunc(app.listProjectMembersHandler)))
+	mux.Handle("PATCH /projects/{id}/members/{userID}", app.requireAuthentication(http.HandlerFunc(app.updateProjectMemberHandler)))
+	mux.Handle("DELETE /projects/{id}/members/{userID}", app.requireAuthentication(http.HandlerFunc(app.deleteProjectMemberHandler)))
 	return app.recoverPanic(app.logRequest(secureHeaders(mux)))
 }

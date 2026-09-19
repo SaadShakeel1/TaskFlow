@@ -245,9 +245,20 @@ func TestProjectModelListByUser(t *testing.T) {
 		t.Fatalf("create other user's project: %v", err)
 	}
 
-	projects, err := projectModel.ListByUser(ctx, owner.ID)
+	list, err := projectModel.ListByUser(ctx, owner.ID, models.ProjectListOptions{
+		Page:     1,
+		PageSize: 20,
+		Sort:     models.ProjectSortUpdatedAt,
+		Order:    models.SortOrderDescending,
+	})
 	if err != nil {
 		t.Fatalf("list projects by user: %v", err)
+	}
+
+	projects := list.Projects
+
+	if list.TotalItems != 2 {
+		t.Errorf("TotalItems = %d, want 2", list.TotalItems)
 	}
 
 	if len(projects) != 2 {

@@ -582,3 +582,352 @@ func TestListProjectsEndpointRejectsInvalidQueryParameters(t *testing.T) {
 		})
 	}
 }
+
+func TestUpdateProjectEndpointUpdatesOnlyProvidedFields(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+	user, sessionToken := createAuthenticatedTestUser(t, app, ctx)
+
+	targetDate := time.Date(2026, time.December, 31, 0, 0, 0, 0, time.UTC)
+
+	project, err := app.projects.Create(
+		ctx,
+		user.ID,
+		"Original project name",
+		"Original project description",
+		&targetDate,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		fmt.Sprintf("/projects/%d", project.ID),
+		strings.NewReader(`{"name":"Updated project name"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: sessionToken,
+	})
+
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	var body struct {
+		ID          int64                `json:"id"`
+		Name        string               `json:"name"`
+		Description string               `json:"description"`
+		Status      models.ProjectStatus `json:"status"`
+		TargetDate  *string              `json:"targetDate"`
+	}
+
+	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if body.ID != project.ID {
+		t.Errorf("ID = %d, want %d", body.ID, project.ID)
+	}
+
+	if body.Name != "Updated project name" {
+		t.Errorf("Name = %q, want %q", body.Name, "Updated project name")
+	}
+
+	if body.Description != project.Description {
+		t.Errorf("Description = %q, want %q", body.Description, project.Description)
+	}
+
+	if body.Status != project.Status {
+		t.Errorf("Status = %q, want %q", body.Status, project.Status)
+	}
+
+	if body.TargetDate == nil {
+		t.Fatal("TargetDate = nil, want the original target date")
+	}
+
+	if got := *body.TargetDate; got != targetDate.Format(time.DateOnly) {
+		t.Errorf("TargetDate = %q, want %q", got, targetDate.Format(time.DateOnly))
+	}
+
+	stored, err := app.projects.GetByIDForUser(ctx, project.ID, user.ID)
+	if err != nil {
+		t.Fatalf("get updated project: %v", err)
+	}
+
+	if stored.Name != "Updated project name" {
+		t.Errorf("stored Name = %q, want %q", stored.Name, "Updated project name")
+	}
+}
+
+func TestUpdateProjectEndpointClearsTargetDate(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+	user, sessionToken := createAuthenticatedTestUser(t, app, ctx)
+
+	targetDate := time.Date(2026, time.December, 31, 0, 0, 0, 0, time.UTC)
+
+	project, err := app.projects.Create(
+		ctx,
+		user.ID,
+		"Project with a target date",
+		"A project whose date will be cleared",
+		&targetDate,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		fmt.Sprintf("/projects/%d", project.ID),
+		strings.NewReader(`{"targetDate":null}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: sessionToken,
+	})
+
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	var body struct {
+		TargetDate *string `json:"targetDate"`
+	}
+
+	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if body.TargetDate != nil {
+		t.Errorf("response TargetDate = %q, want nil", *body.TargetDate)
+	}
+
+	stored, err := app.projects.GetByIDForUser(ctx, project.ID, user.ID)
+	if err != nil {
+		t.Fatalf("get updated project: %v", err)
+	}
+
+	if stored.TargetDate != nil {
+		t.Errorf(
+			"stored TargetDate = %s, want nil",
+			stored.TargetDate.Format(time.DateOnly),
+		)
+	}
+}
+
+func TestUpdateProjectEndpointHonorsMemberRoles(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+
+	owner, _ := createAuthenticatedTestUser(t, app, ctx)
+	editor, editorToken := createProjectMemberTestUser(t, app, ctx, "editor@example.com", "Editor")
+	viewer, viewerToken := createProjectMemberTestUser(t, app, ctx, "viewer@example.com", "Viewer")
+
+	project, err := app.projects.Create(
+		ctx, owner.ID, "Shared project", "A project with collaborators", nil,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	// Add editor.
+	if _, err := app.projectMembers.Create(
+		ctx, project.ID, editor.ID, models.ProjectMemberRoleEditor,
+	); err != nil {
+		t.Fatalf("add editor: %v", err)
+	}
+
+	// Add viewer.
+	if _, err := app.projectMembers.Create(
+		ctx, project.ID, viewer.ID, models.ProjectMemberRoleViewer,
+	); err != nil {
+		t.Fatalf("add viewer: %v", err)
+	}
+
+	// Test 1: Editor should be able to update the project.
+	editorRequest := httptest.NewRequest(
+		http.MethodPatch,
+		fmt.Sprintf("/projects/%d", project.ID),
+		strings.NewReader(`{"status":"completed"}`),
+	)
+	editorRequest.Header.Set("Content-Type", "application/json")
+	editorRequest.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: editorToken,
+	})
+
+	editorRecorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(editorRecorder, editorRequest)
+
+	if editorRecorder.Code != http.StatusOK {
+		t.Fatalf("editor status code = %d, want %d", editorRecorder.Code, http.StatusOK)
+	}
+
+	var editorBody struct {
+		Status models.ProjectStatus `json:"status"`
+	}
+
+	if err := json.NewDecoder(editorRecorder.Body).Decode(&editorBody); err != nil {
+		t.Fatalf("decode editor response: %v", err)
+	}
+
+	if editorBody.Status != models.ProjectStatusCompleted {
+		t.Errorf(
+			"editor updated Status = %q, want %q",
+			editorBody.Status,
+			models.ProjectStatusCompleted,
+		)
+	}
+
+	// Test 2: Viewer should not be able to update the project.
+	viewerRequest := httptest.NewRequest(
+		http.MethodPatch,
+		fmt.Sprintf("/projects/%d", project.ID),
+		strings.NewReader(`{"name":"Viewer must not update"}`),
+	)
+	viewerRequest.Header.Set("Content-Type", "application/json")
+	viewerRequest.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: viewerToken,
+	})
+
+	viewerRecorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(viewerRecorder, viewerRequest)
+
+	if viewerRecorder.Code != http.StatusNotFound {
+		t.Errorf(
+			"viewer status code = %d, want %d",
+			viewerRecorder.Code,
+			http.StatusNotFound,
+		)
+	}
+
+	if got := viewerRecorder.Body.String(); got != "project not found\n" {
+		t.Errorf("viewer response body = %q, want not-found error", got)
+	}
+}
+
+func TestUpdateProjectEndpointRejectsInvalidRequests(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+	user, sessionToken := createAuthenticatedTestUser(t, app, ctx)
+
+	project, err := app.projects.Create(
+		ctx, user.ID, "Original project", "Original description", nil,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		body     string
+		wantBody string
+	}{
+		{
+			name:     "empty update",
+			body:     `{}`,
+			wantBody: "atleast one project field must be provided\n",
+		},
+		{
+			name:     "blank name",
+			body:     `{"name":"   "}`,
+			wantBody: "project name is required\n",
+		},
+		{
+			name:     "null name",
+			body:     `{"name":null}`,
+			wantBody: "project name cannot be null\n",
+		},
+		{
+			name:     "invalid status",
+			body:     `{"status":"paused"}`,
+			wantBody: "project status is invalid\n",
+		},
+		{
+			name:     "invalid target date",
+			body:     `{"targetDate":"31-12-2026"}`,
+			wantBody: "target date must use YYYY-MM-DD\n",
+		},
+		{
+			name:     "unknown field",
+			body:     `{"ownerId":99}`,
+			wantBody: "request body must be valid JSON\n",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(
+				http.MethodPatch,
+				fmt.Sprintf("/projects/%d", project.ID),
+				strings.NewReader(test.body),
+			)
+
+			request.Header.Set("Content-Type", "application/json")
+			request.AddCookie(&http.Cookie{
+				Name:  sessionCookieName,
+				Value: sessionToken,
+			})
+
+			recorder := httptest.NewRecorder()
+			app.routes().ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Errorf(
+					"status code = %d, want %d",
+					recorder.Code, http.StatusBadRequest,
+				)
+			}
+
+			if got := recorder.Body.String(); got != test.wantBody {
+				t.Errorf("response body = %q, want %q", got, test.wantBody)
+			}
+		})
+	}
+
+	// Invalid requests must not partially change stored data.
+	stored, err := app.projects.GetByIDForUser(ctx, project.ID, user.ID)
+	if err != nil {
+		t.Fatalf("get project after invalid updates: %v", err)
+	}
+
+	if stored.Name != "Original project" {
+		t.Errorf("stored Name = %q, want original value", stored.Name)
+	}
+}

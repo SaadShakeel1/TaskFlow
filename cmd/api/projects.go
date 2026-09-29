@@ -1,13 +1,15 @@
 package main
 
 import (
-	"encoding/json"
+	"bytes"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"encoding/json"
 
 	"github.com/SaadShakeel1/TaskFlow/internal/models"
 )
@@ -46,6 +48,101 @@ type paginationResponse struct {
 type projectListResponse struct {
 	Projects   []projectResponse  `json:"projects"`
 	Pagination paginationResponse `json:"pagination"`
+}
+
+type optionalString struct {
+	Set   bool
+	Null  bool
+	Value string
+}
+
+func (o *optionalString) UnmarshalJSON(data []byte) error {
+	o.Set = true
+	o.Null = bytes.Equal(bytes.TrimSpace(data), []byte("null"))
+
+	if o.Null {
+		o.Value = ""
+		return nil
+	}
+
+	return json.Unmarshal(data, &o.Value)
+}
+
+type updateProjectRequest struct {
+	Name        optionalString `json:"name"`
+	Description optionalString `json:"description"`
+	Status      optionalString `json:"status"`
+	TargetDate  optionalString `json:"targetDate"`
+}
+
+func mergeProjectUpdate(project models.Project, request updateProjectRequest) (models.ProjectUpdate, error) {
+	update := models.ProjectUpdate{
+		Name:        project.Name,
+		Description: project.Description,
+		Status:      project.Status,
+		TargetDate:  project.TargetDate,
+	}
+
+	if request.Name.Set {
+		if request.Name.Null {
+			return models.ProjectUpdate{}, errors.New("project name cannot be null")
+		}
+		update.Name = strings.TrimSpace(request.Name.Value)
+	}
+
+	if request.Description.Set {
+		if request.Description.Null {
+			return models.ProjectUpdate{}, errors.New("project description cannot be empty")
+		}
+		update.Description = strings.TrimSpace(request.Description.Value)
+	}
+
+	if request.Status.Set {
+		if request.Status.Null {
+			return models.ProjectUpdate{}, errors.New("project status cannot be null")
+		}
+		status := models.ProjectStatus(request.Status.Value)
+
+		switch status {
+		case models.ProjectStatusActive,
+			models.ProjectStatusArchived,
+			models.ProjectStatusCompleted:
+			update.Status = status
+
+		default:
+			return models.ProjectUpdate{}, errors.New("project status is invalid")
+		}
+	}
+
+	if request.TargetDate.Set {
+		if request.TargetDate.Null {
+			update.TargetDate = nil
+		} else {
+			targetDate, err := parseTargetDate(&request.TargetDate.Value)
+			if err != nil {
+				return models.ProjectUpdate{}, errors.New("target date must use YYYY-MM-DD")
+			}
+			update.TargetDate = targetDate
+		}
+	}
+
+	if update.Name == "" {
+		return models.ProjectUpdate{}, errors.New("project name is required")
+	}
+
+	if utf8.RuneCountInString(update.Name) > maximumProjectNameCharacters {
+		return models.ProjectUpdate{}, errors.New(
+			"project name must not exceed 100 characters",
+		)
+	}
+
+	if utf8.RuneCountInString(update.Description) > maximumProjectDescriptionCharacters {
+		return models.ProjectUpdate{}, errors.New(
+			"project description must not exceed 1000 characters",
+		)
+	}
+
+	return update, nil
 }
 
 func (app *application) createProjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -95,6 +192,52 @@ func (app *application) createProjectHandler(w http.ResponseWriter, r *http.Requ
 	if err := app.writeJSON(w, http.StatusCreated, newProjectResponse(project)); err != nil {
 		app.errorLog.Printf("encode project response: %v", err)
 	}
+}
+
+func (app *application) updateProjectHandler(w http.ResponseWriter, r *http.Request) {
+	project, user, ok := app.projectForRequest(w, r)
+
+	if !ok {
+		return
+	}
+
+	var request updateProjectRequest
+
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+
+	if err := decoder.Decode(&request); err != nil {
+		app.clientError(w, http.StatusBadRequest, "request body must be valid JSON")
+		return
+	}
+
+	if !request.Name.Set && !request.Description.Set && !request.Status.Set && !request.TargetDate.Set {
+		app.clientError(w, http.StatusBadRequest, "atleast one project field must be provided")
+		return
+	}
+
+	update, err := mergeProjectUpdate(project, request)
+	if err != nil {
+		app.clientError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	updatedProject, err := app.projects.UpdateByIDForUser(r.Context(), project.ID, user.ID, update)
+
+	if err != nil {
+		if errors.Is(err, models.ErrNoRecord) {
+			app.notFound(w, "project not found")
+			return
+		}
+
+		app.serverError(w, err)
+		return
+	}
+
+	if err := app.writeJSON(w, http.StatusOK, newProjectResponse(updatedProject)); err != nil {
+		app.errorLog.Printf("encode updated project response: %v", err)
+	}
+
 }
 
 func (app *application) listProjectsHandler(w http.ResponseWriter, r *http.Request) {

@@ -26,5 +26,7 @@ func newTestApplication(db *sql.DB) *application {
 		sessions:           &models.SessionModel{DB: db},
 		mailer:             discardMailer{},
 		config:             config{sessionTTL: 7 * 24 * time.Hour},
+		projects:           &models.ProjectModel{DB: db},
+		projectMembers:     &models.ProjectMemberModel{DB: db},
 	}
 }

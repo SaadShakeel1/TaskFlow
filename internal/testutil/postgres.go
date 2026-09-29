@@ -79,10 +79,15 @@ func OpenTestDB(t testing.TB) *sql.DB {
 	return db
 }
 
-func ResetUsers(t testing.TB, db *sql.DB) {
+func ResetDatabase(t testing.TB, db *sql.DB) {
 	t.Helper()
 
-	if _, err := db.Exec("TRUNCATE TABLE sessions, email_verification_tokens, users RESTART IDENTITY"); err != nil {
-		t.Fatalf("reset users table: %v", err)
+	const query = `
+		TRUNCATE TABLE project_members, projects, sessions, email_verification_tokens, users
+		RESTART IDENTITY
+	`
+
+	if _, err := db.Exec(query); err != nil {
+		t.Fatalf("reset test database: %v", err)
 	}
 }

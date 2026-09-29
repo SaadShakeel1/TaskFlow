@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -930,4 +931,126 @@ func TestUpdateProjectEndpointRejectsInvalidRequests(t *testing.T) {
 	if stored.Name != "Original project" {
 		t.Errorf("stored Name = %q, want original value", stored.Name)
 	}
+}
+
+func TestDeleteProjectEndpoint(t *testing.T) {
+    db := testutil.OpenTestDB(t)
+    testutil.ResetDatabase(t, db)
+    t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+    ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+    defer cancel()
+
+    app := newTestApplication(db)
+    owner, sessionToken := createAuthenticatedTestUser(t, app, ctx)
+
+    project, err := app.projects.Create(
+        ctx, owner.ID, "Project to delete", "This project should disappear", nil,
+    )
+    if err != nil {
+        t.Fatalf("create project: %v", err)
+    }
+
+    request := httptest.NewRequest(
+        http.MethodDelete, fmt.Sprintf("/projects/%d", project.ID), nil,
+    )
+    request.AddCookie(&http.Cookie{
+        Name:  sessionCookieName,
+        Value: sessionToken,
+    })
+
+    recorder := httptest.NewRecorder()
+    app.routes().ServeHTTP(recorder, request)
+
+    // Successful DELETE requests return 204 with no response body.
+    if recorder.Code != http.StatusNoContent {
+        t.Fatalf("status code = %d, want %d", recorder.Code, http.StatusNoContent)
+    }
+
+    if recorder.Body.Len() != 0 {
+        t.Errorf("response body = %q, want empty body", recorder.Body.String())
+    }
+
+    // Confirm the database record was deleted.
+    _, err = app.projects.GetByIDForUser(ctx, project.ID, owner.ID)
+    if !errors.Is(err, models.ErrNoRecord) {
+        t.Errorf("get deleted project error = %v, want models.ErrNoRecord", err)
+    }
+}
+
+func TestDeleteProjectEndpointRejectsProjectMembers(t *testing.T) {
+    db := testutil.OpenTestDB(t)
+    testutil.ResetDatabase(t, db)
+    t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+    ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+    defer cancel()
+
+    app := newTestApplication(db)
+    owner, _ := createAuthenticatedTestUser(t, app, ctx)
+
+    project, err := app.projects.Create(
+        ctx, owner.ID, "Owner-only project", "Members must not delete it", nil,
+    )
+    if err != nil {
+        t.Fatalf("create project: %v", err)
+    }
+
+    tests := []struct {
+        name  string
+        email string
+        role  models.ProjectMemberRole
+    }{
+        {
+            name:  "editor",
+            email: "delete-editor@example.com",
+            role:  models.ProjectMemberRoleEditor,
+        },
+        {
+            name:  "viewer",
+            email: "delete-viewer@example.com",
+            role:  models.ProjectMemberRoleViewer,
+        },
+    }
+
+    for _, test := range tests {
+        t.Run(test.name, func(t *testing.T) {
+            member, sessionToken := createProjectMemberTestUser(
+                t, app, ctx, test.email, test.name,
+            )
+
+            _, err := app.projectMembers.Create(ctx, project.ID, member.ID, test.role)
+            if err != nil {
+                t.Fatalf("add %s: %v", test.name, err)
+            }
+
+            request := httptest.NewRequest(
+                http.MethodDelete, fmt.Sprintf("/projects/%d", project.ID), nil,
+            )
+            request.AddCookie(&http.Cookie{
+                Name:  sessionCookieName,
+                Value: sessionToken,
+            })
+
+            recorder := httptest.NewRecorder()
+            app.routes().ServeHTTP(recorder, request)
+
+            if recorder.Code != http.StatusForbidden {
+                t.Errorf(
+                    "status code = %d, want %d",
+                    recorder.Code, http.StatusForbidden,
+                )
+            }
+
+            if got := recorder.Body.String(); got != "project owner permission required\n" {
+                t.Errorf("response body = %q, want owner-permission error", got)
+            }
+
+            // Rejected deletes must leave the project intact.
+            _, err = app.projects.GetByIDForUser(ctx, project.ID, owner.ID)
+            if err != nil {
+                t.Errorf("get project after rejected delete: %v", err)
+            }
+        })
+    }
 }

@@ -48,6 +48,17 @@ type taskResponse struct {
 	UpdatedAt          time.Time           `json:"updatedAt"`
 }
 
+const (
+	defaultTaskPage     = 1
+	defaultTaskPageSize = 20
+	maximumTaskPageSize = 100
+)
+
+type taskListResponse struct {
+	Tasks      []taskResponse     `json:"tasks"`
+	Pagination paginationResponse `json:"pagination"`
+}
+
 func (app *application) createTaskHandler(w http.ResponseWriter, r *http.Request) {
 	project, user, ok := app.projectForRequest(w, r)
 	if !ok {
@@ -204,5 +215,138 @@ func (app *application) getTaskHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err := app.writeJSON(w, http.StatusOK, newTaskResponse(task)); err != nil {
 		app.errorLog.Printf("encode task response: %v", err)
+	}
+}
+
+func parseTaskListOptions(r *http.Request) (models.TaskListOptions, error) {
+	options := models.TaskListOptions{
+		Page:     defaultTaskPage,
+		PageSize: defaultTaskPageSize,
+		Sort:     models.TaskSortUpdatedAt,
+		Order:    models.SortOrderDescending,
+	}
+
+	query := r.URL.Query()
+
+	if value := query.Get("page"); value != "" {
+		page, err := strconv.Atoi(value)
+		if err != nil || page < 1 {
+			return models.TaskListOptions{}, errors.New(
+				"page must be a positive integer",
+			)
+		}
+
+		options.Page = page
+	}
+
+	if value := query.Get("pageSize"); value != "" {
+		pageSize, err := strconv.Atoi(value)
+		if err != nil || pageSize < 1 || pageSize > maximumTaskPageSize {
+			return models.TaskListOptions{}, errors.New(
+				"page size must be between 1 and 100",
+			)
+		}
+
+		options.PageSize = pageSize
+	}
+
+	if value := query.Get("status"); value != "" {
+		status := models.TaskStatus(value)
+
+		switch status {
+		case models.TaskStatusTODO,
+			models.TaskStatusInProgress,
+			models.TaskStatusBlocked,
+			models.TaskStatusDone:
+			options.Status = &status
+		default:
+			return models.TaskListOptions{}, errors.New(
+				"task status is invalid",
+			)
+		}
+	}
+
+	if value := query.Get("priority"); value != "" {
+		priority := models.TaskPriority(value)
+
+		if !models.IsValidTaskPriority(priority) {
+			return models.TaskListOptions{}, errors.New(
+				"task priority is invalid",
+			)
+		}
+
+		options.Priority = &priority
+	}
+
+	if value := query.Get("sort"); value != "" {
+		sort := models.TaskSort(value)
+
+		switch sort {
+		case models.TaskSortUpdatedAt,
+			models.TaskSortCreatedAt,
+			models.TaskSortDueDate,
+			models.TaskSortPriority:
+			options.Sort = sort
+		default:
+			return models.TaskListOptions{}, errors.New(
+				"task sort is invalid",
+			)
+		}
+	}
+
+	if value := query.Get("order"); value != "" {
+		order := models.SortOrder(value)
+
+		switch order {
+		case models.SortOrderAscending,
+			models.SortOrderDescending:
+			options.Order = order
+		default:
+			return models.TaskListOptions{}, errors.New(
+				"sort order is invalid",
+			)
+		}
+	}
+
+	return options, nil
+}
+
+func (app *application) listTasksHandler(w http.ResponseWriter, r *http.Request) {
+	project, user, ok := app.projectForRequest(w, r)
+	if !ok {
+		return
+	}
+
+	options, err := parseTaskListOptions(r)
+
+	if err != nil {
+		app.clientError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	taskList, err := app.tasks.ListByProjectForUser(r.Context(), project.ID, user.ID, options)
+
+	if err != nil {
+		app.serverError(w, err)
+	}
+
+	tasks := make([]taskResponse, 0, len(taskList.Tasks))
+
+	for _, task := range taskList.Tasks {
+		tasks = append(tasks, newTaskResponse(task))
+	}
+
+	response := taskListResponse{
+		Tasks: tasks,
+		Pagination: paginationResponse{
+			Page:       options.Page,
+			PageSize:   options.PageSize,
+			TotalItems: taskList.TotalItems,
+			TotalPages: (taskList.TotalItems + options.PageSize - 1) / options.PageSize,
+		},
+	}
+
+	if err := app.writeJSON(w, http.StatusOK, response); err != nil {
+		app.errorLog.Printf("encode task list response: %v", err)
 	}
 }

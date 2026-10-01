@@ -209,3 +209,215 @@ func TestTaskModelCreateRejectsViewerAssignee(t *testing.T) {
 		t.Errorf("viewer-assignee create error = %v, want models.ErrNoRecord", err)
 	}
 }
+
+func TestTaskModelListByProjectForUser(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+
+	t.Cleanup(func() {
+		testutil.ResetDatabase(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	users := &models.UserModel{DB: db}
+	projects := &models.ProjectModel{DB: db}
+	members := &models.ProjectMemberModel{DB: db}
+	tasks := &models.TaskModel{DB: db}
+
+	owner, err := users.Create(
+		ctx,
+		"list-owner@example.com",
+		"List Owner",
+		"correct-password",
+	)
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+
+	viewer, err := users.Create(
+		ctx,
+		"list-viewer@example.com",
+		"List Viewer",
+		"correct-password",
+	)
+	if err != nil {
+		t.Fatalf("create viewer: %v", err)
+	}
+
+	outsider, err := users.Create(
+		ctx,
+		"list-outsider@example.com",
+		"List Outsider",
+		"correct-password",
+	)
+	if err != nil {
+		t.Fatalf("create outsider: %v", err)
+	}
+
+	project, err := projects.Create(
+		ctx,
+		owner.ID,
+		"Task list project",
+		"Project for list testing",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	if _, err := members.Create(
+		ctx,
+		project.ID,
+		viewer.ID,
+		models.ProjectMemberRoleViewer,
+	); err != nil {
+		t.Fatalf("create viewer membership: %v", err)
+	}
+
+	urgentTask, err := tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Urgent task",
+		Priority: models.TaskPriorityUrgent,
+	})
+	if err != nil {
+		t.Fatalf("create urgent task: %v", err)
+	}
+
+	highTask, err := tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "High task",
+		Priority: models.TaskPriorityHigh,
+	})
+	if err != nil {
+		t.Fatalf("create high task: %v", err)
+	}
+
+	_, err = tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Low task",
+		Priority: models.TaskPriorityLow,
+	})
+	if err != nil {
+		t.Fatalf("create low task: %v", err)
+	}
+
+	// Blocked tasks must include a blocked reason because of the database constraint.
+	if _, err := db.ExecContext(
+		ctx,
+		`UPDATE tasks
+		 SET status = 'blocked',
+		     blocked_reason = 'Waiting for deployment access'
+		 WHERE id = $1`,
+		urgentTask.ID,
+	); err != nil {
+		t.Fatalf("mark task blocked: %v", err)
+	}
+
+	list, err := tasks.ListByProjectForUser(
+		ctx,
+		project.ID,
+		owner.ID,
+		models.TaskListOptions{
+			Page:     1,
+			PageSize: 2,
+			Sort:     models.TaskSortPriority,
+			Order:    models.SortOrderAscending,
+		},
+	)
+	if err != nil {
+		t.Fatalf("list tasks for owner: %v", err)
+	}
+
+	if list.TotalItems != 3 {
+		t.Errorf("total items = %d, want 3", list.TotalItems)
+	}
+
+	if len(list.Tasks) != 2 {
+		t.Fatalf("returned tasks = %d, want 2", len(list.Tasks))
+	}
+
+	if list.Tasks[0].ID != urgentTask.ID {
+		t.Errorf(
+			"first task ID = %d, want urgent task %d",
+			list.Tasks[0].ID,
+			urgentTask.ID,
+		)
+	}
+
+	if list.Tasks[1].ID != highTask.ID {
+		t.Errorf(
+			"second task ID = %d, want high task %d",
+			list.Tasks[1].ID,
+			highTask.ID,
+		)
+	}
+
+	filtered, err := tasks.ListByProjectForUser(
+		ctx,
+		project.ID,
+		owner.ID,
+		models.TaskListOptions{
+			Page:     1,
+			PageSize: 20,
+			Status:   taskStatusPointer(models.TaskStatusBlocked),
+			Sort:     models.TaskSortUpdatedAt,
+			Order:    models.SortOrderDescending,
+		},
+	)
+	if err != nil {
+		t.Fatalf("list blocked tasks: %v", err)
+	}
+
+	if filtered.TotalItems != 1 {
+		t.Errorf("blocked total items = %d, want 1", filtered.TotalItems)
+	}
+
+	if len(filtered.Tasks) != 1 || filtered.Tasks[0].ID != urgentTask.ID {
+		t.Errorf("blocked tasks = %#v, want urgent task", filtered.Tasks)
+	}
+
+	viewerList, err := tasks.ListByProjectForUser(
+		ctx,
+		project.ID,
+		viewer.ID,
+		models.TaskListOptions{
+			Page:     1,
+			PageSize: 20,
+			Sort:     models.TaskSortCreatedAt,
+			Order:    models.SortOrderAscending,
+		},
+	)
+	if err != nil {
+		t.Fatalf("list tasks for viewer: %v", err)
+	}
+
+	if viewerList.TotalItems != 3 {
+		t.Errorf("viewer total items = %d, want 3", viewerList.TotalItems)
+	}
+
+	outsideList, err := tasks.ListByProjectForUser(
+		ctx,
+		project.ID,
+		outsider.ID,
+		models.TaskListOptions{
+			Page:     1,
+			PageSize: 20,
+			Sort:     models.TaskSortUpdatedAt,
+			Order:    models.SortOrderDescending,
+		},
+	)
+	if err != nil {
+		t.Fatalf("list tasks for outsider: %v", err)
+	}
+
+	if outsideList.TotalItems != 0 {
+		t.Errorf("outsider total items = %d, want 0", outsideList.TotalItems)
+	}
+
+	if len(outsideList.Tasks) != 0 {
+		t.Errorf("outsider tasks = %d, want 0", len(outsideList.Tasks))
+	}
+}
+
+func taskStatusPointer(status models.TaskStatus) *models.TaskStatus {
+	return &status
+}

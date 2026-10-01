@@ -732,3 +732,302 @@ func TestGetTaskEndpointRejectsInvalidIDs(t *testing.T) {
 		})
 	}
 }
+
+func TestListTasksEndpoint(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() {
+		testutil.ResetDatabase(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+	owner, ownerToken := createAuthenticatedTestUser(t, app, ctx)
+
+	project, err := app.projects.Create(
+		ctx,
+		owner.ID,
+		"Task list API project",
+		"Test task listing",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	urgentTask, err := app.tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Urgent task",
+		Priority: models.TaskPriorityUrgent,
+	})
+	if err != nil {
+		t.Fatalf("create urgent task: %v", err)
+	}
+
+	_, err = app.tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "High task",
+		Priority: models.TaskPriorityHigh,
+	})
+	if err != nil {
+		t.Fatalf("create high task: %v", err)
+	}
+
+	_, err = app.tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Low task",
+		Priority: models.TaskPriorityLow,
+	})
+	if err != nil {
+		t.Fatalf("create low task: %v", err)
+	}
+
+	if _, err := db.ExecContext(
+		ctx,
+		`UPDATE tasks
+		 SET status = 'blocked',
+		     blocked_reason = 'Waiting for deployment access'
+		 WHERE id = $1`,
+		urgentTask.ID,
+	); err != nil {
+		t.Fatalf("mark task blocked: %v", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		fmt.Sprintf(
+			"/projects/%d/tasks?page=1&pageSize=2&sort=priority&order=asc",
+			project.ID,
+		),
+		nil,
+	)
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: ownerToken,
+	})
+
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	var response taskListResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Pagination.Page != 1 {
+		t.Errorf("page = %d, want 1", response.Pagination.Page)
+	}
+
+	if response.Pagination.PageSize != 2 {
+		t.Errorf("page size = %d, want 2", response.Pagination.PageSize)
+	}
+
+	if response.Pagination.TotalItems != 3 {
+		t.Errorf("total items = %d, want 3", response.Pagination.TotalItems)
+	}
+
+	if response.Pagination.TotalPages != 2 {
+		t.Errorf("total pages = %d, want 2", response.Pagination.TotalPages)
+	}
+
+	if len(response.Tasks) != 2 {
+		t.Fatalf("returned tasks = %d, want 2", len(response.Tasks))
+	}
+
+	if response.Tasks[0].Priority != models.TaskPriorityUrgent {
+		t.Errorf(
+			"first priority = %q, want %q",
+			response.Tasks[0].Priority,
+			models.TaskPriorityUrgent,
+		)
+	}
+
+	filterRequest := httptest.NewRequest(
+		http.MethodGet,
+		fmt.Sprintf(
+			"/projects/%d/tasks?status=blocked",
+			project.ID,
+		),
+		nil,
+	)
+	filterRequest.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: ownerToken,
+	})
+
+	filterRecorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(filterRecorder, filterRequest)
+
+	if filterRecorder.Code != http.StatusOK {
+		t.Fatalf(
+			"filtered status code = %d, want %d",
+			filterRecorder.Code,
+			http.StatusOK,
+		)
+	}
+
+	var filteredResponse taskListResponse
+	if err := json.NewDecoder(filterRecorder.Body).Decode(&filteredResponse); err != nil {
+		t.Fatalf("decode filtered response: %v", err)
+	}
+
+	if filteredResponse.Pagination.TotalItems != 1 {
+		t.Errorf(
+			"filtered total items = %d, want 1",
+			filteredResponse.Pagination.TotalItems,
+		)
+	}
+
+	if len(filteredResponse.Tasks) != 1 {
+		t.Fatalf("filtered tasks = %d, want 1", len(filteredResponse.Tasks))
+	}
+
+	if filteredResponse.Tasks[0].Status != models.TaskStatusBlocked {
+		t.Errorf(
+			"filtered status = %q, want %q",
+			filteredResponse.Tasks[0].Status,
+			models.TaskStatusBlocked,
+		)
+	}
+}
+
+func TestListTasksEndpointAllowsViewer(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() {
+		testutil.ResetDatabase(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+
+	owner, _ := createAuthenticatedTestUser(t, app, ctx)
+	viewer, viewerToken := createProjectMemberTestUser(
+		t,
+		app,
+		ctx,
+		"list-viewer-api@example.com",
+		"List Viewer API",
+	)
+
+	project, err := app.projects.Create(
+		ctx,
+		owner.ID,
+		"Viewer task project",
+		"Viewer can list tasks",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	if _, err := app.projectMembers.Create(
+		ctx,
+		project.ID,
+		viewer.ID,
+		models.ProjectMemberRoleViewer,
+	); err != nil {
+		t.Fatalf("create viewer membership: %v", err)
+	}
+
+	_, err = app.tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Visible task",
+		Priority: models.TaskPriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		fmt.Sprintf("/projects/%d/tasks", project.ID),
+		nil,
+	)
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: viewerToken,
+	})
+
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	var response taskListResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Pagination.TotalItems != 1 {
+		t.Errorf("total items = %d, want 1", response.Pagination.TotalItems)
+	}
+}
+
+func TestListTasksEndpointRejectsInvalidQueryParameters(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() {
+		testutil.ResetDatabase(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+	owner, ownerToken := createAuthenticatedTestUser(t, app, ctx)
+
+	project, err := app.projects.Create(
+		ctx,
+		owner.ID,
+		"Invalid list project",
+		"Test invalid task list parameters",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{name: "invalid page", query: "?page=0"},
+		{name: "invalid page size", query: "?pageSize=101"},
+		{name: "invalid status", query: "?status=unknown"},
+		{name: "invalid priority", query: "?priority=critical"},
+		{name: "invalid sort", query: "?sort=unknown"},
+		{name: "invalid order", query: "?order=random"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(
+				http.MethodGet,
+				fmt.Sprintf("/projects/%d/tasks%s", project.ID, test.query),
+				nil,
+			)
+			request.AddCookie(&http.Cookie{
+				Name:  sessionCookieName,
+				Value: ownerToken,
+			})
+
+			recorder := httptest.NewRecorder()
+			app.routes().ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Errorf(
+					"status code = %d, want %d",
+					recorder.Code,
+					http.StatusBadRequest,
+				)
+			}
+		})
+	}
+}

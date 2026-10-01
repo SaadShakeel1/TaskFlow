@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -170,4 +171,38 @@ func newTaskResponse(task models.Task) taskResponse {
 	}
 
 	return response
+}
+
+func (app *application) getTaskHandler(w http.ResponseWriter, r *http.Request) {
+	project, user, ok := app.projectForRequest(w, r)
+
+	if !ok {
+		return
+	}
+
+	taskID, err := strconv.ParseInt(r.PathValue("taskID"), 10, 64)
+	if err != nil || taskID < 1 {
+		app.clientError(w, http.StatusBadRequest, "task id must be positive a integer")
+		return
+	}
+
+	task, err := app.tasks.GetByIDForUser(r.Context(), taskID, user.ID)
+
+	if err != nil {
+		if errors.Is(err, models.ErrNoRecord) {
+			app.notFound(w, "task not found")
+			return
+		}
+		app.serverError(w, err)
+		return
+	}
+
+	if task.ProjectID != project.ID {
+		app.notFound(w, "task not found")
+		return
+	}
+
+	if err := app.writeJSON(w, http.StatusOK, newTaskResponse(task)); err != nil {
+		app.errorLog.Printf("encode task response: %v", err)
+	}
 }

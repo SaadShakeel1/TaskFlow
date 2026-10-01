@@ -190,3 +190,70 @@ func (m *TaskModel) Create(ctx context.Context, projectID int64, createdByUserID
 
 	return task, nil
 }
+
+func (m *TaskModel) GetByIDForUser(ctx context.Context, taskID int64, userID int64) (Task, error) {
+	const query = `
+	SELECT 
+		t.id,                                            
+		t.project_id,                                    
+		t.created_by_user_id,                            
+		t.assignee_id,                                   
+		t.title,                                         
+		t.description,                                   
+		t.acceptance_criteria,                           
+		t.status,                                        
+		t.priority,                                      
+		t.due_date,
+		t.estimate_minutes,                              
+		t.blocked_reason,                                
+		t.started_at,                                    
+		t.completed_at,                                  
+		t.version,                                       
+		t.created_at,                                    
+		t.updated_at    
+	FROM tasks t
+	WHERE t.id = $1
+	AND EXISTS(
+		SELECT 1 FROM
+		projects p
+		WHERE p.id = t.project_id
+		AND(
+			p.user_id = $2
+			OR EXISTS (
+				SELECT 1 FROM
+				project_members pm
+				WHERE pm.user_id = $2
+				AND p.id = pm.project_id
+			)
+		)
+	)
+	`
+	var task Task
+	err := m.DB.QueryRowContext(ctx, query, taskID, userID).Scan(
+		&task.ID,
+		&task.ProjectID,
+		&task.CreatedByUserID,
+		&task.AssigneeID,
+		&task.Title,
+		&task.Description,
+		&task.AcceptanceCriteria,
+		&task.Status,
+		&task.Priority,
+		&task.DueDate,
+		&task.EstimateMinutes,
+		&task.BlockedReason,
+		&task.StartedAt,
+		&task.CompletedAt,
+		&task.Version,
+		&task.CreatedAt,
+		&task.UpdatedAt,
+	)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Task{}, ErrNoRecord
+		}
+		return Task{}, fmt.Errorf("get task by ID for user: %w", err)
+	}
+	return task, nil
+}

@@ -317,3 +317,4 @@ func (m *ProjectModel) ListByUser(ctx context.Context, userID int64, options Pro
 
 	return ProjectList{Projects: projects, TotalItems: totalItems}, nil
 }
+

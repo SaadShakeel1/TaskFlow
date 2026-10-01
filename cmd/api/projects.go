@@ -397,8 +397,8 @@ func parseProjectListOptions(r *http.Request) (models.ProjectListOptions, error)
 	return options, nil
 }
 
-func (app *application) deleteProjectHandler(w http.ResponseWriter, r *http.Request){
-	project, user, ok := app.ownedProjectForRequest(w,r)
+func (app *application) deleteProjectHandler(w http.ResponseWriter, r *http.Request) {
+	project, user, ok := app.ownedProjectForRequest(w, r)
 
 	if !ok {
 		return
@@ -406,10 +406,10 @@ func (app *application) deleteProjectHandler(w http.ResponseWriter, r *http.Requ
 
 	err := app.projects.DeleteByIDForUser(r.Context(), project.ID, user.ID)
 	if err != nil {
-		if errors.Is(err,models.ErrNoRecord){
-			app.notFound(w,"project not found")
+		if errors.Is(err, models.ErrNoRecord) {
+			app.notFound(w, "project not found")
 		}
-		app.serverError(w,err)
+		app.serverError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

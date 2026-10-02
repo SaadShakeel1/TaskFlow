@@ -421,3 +421,127 @@ func TestTaskModelListByProjectForUser(t *testing.T) {
 func taskStatusPointer(status models.TaskStatus) *models.TaskStatus {
 	return &status
 }
+
+func TestTaskModelUpdateByIDForUser(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() {
+		testutil.ResetDatabase(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	users := &models.UserModel{DB: db}
+	projects := &models.ProjectModel{DB: db}
+	tasks := &models.TaskModel{DB: db}
+
+	owner, err := users.Create(
+		ctx,
+		"update-owner@example.com",
+		"Update Owner",
+		"correct-password",
+	)
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+
+	project, err := projects.Create(
+		ctx,
+		owner.ID,
+		"Update project",
+		"Project for update testing",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	task, err := tasks.Create(
+		ctx,
+		project.ID,
+		owner.ID,
+		models.TaskCreateInput{
+			Title:    "Original title",
+			Priority: models.TaskPriorityMedium,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	updated, err := tasks.UpdateByIDForUser(
+		ctx,
+		task.ID,
+		owner.ID,
+		models.TaskUpdateInput{
+			Title:              "Updated title",
+			Description:        "Updated description",
+			AcceptanceCriteria: "Updated acceptance criteria",
+			Priority:           models.TaskPriorityHigh,
+			Status:             models.TaskStatusInProgress,
+			ExpectedVersion:    task.Version,
+		},
+	)
+	if err != nil {
+		t.Fatalf("update task: %v", err)
+	}
+
+	if updated.Title != "Updated title" {
+		t.Errorf("title = %q, want %q", updated.Title, "Updated title")
+	}
+
+	if updated.Description != "Updated description" {
+		t.Errorf(
+			"description = %q, want %q",
+			updated.Description,
+			"Updated description",
+		)
+	}
+
+	if updated.Priority != models.TaskPriorityHigh {
+		t.Errorf(
+			"priority = %q, want %q",
+			updated.Priority,
+			models.TaskPriorityHigh,
+		)
+	}
+
+	if updated.Status != models.TaskStatusInProgress {
+		t.Errorf(
+			"status = %q, want %q",
+			updated.Status,
+			models.TaskStatusInProgress,
+		)
+	}
+
+	if updated.StartedAt == nil {
+		t.Error("startedAt is nil, want timestamp for in-progress task")
+	}
+
+	if updated.Version != task.Version+1 {
+		t.Errorf(
+			"version = %d, want %d",
+			updated.Version,
+			task.Version+1,
+		)
+	}
+
+	_, err = tasks.UpdateByIDForUser(
+		ctx,
+		task.ID,
+		owner.ID,
+		models.TaskUpdateInput{
+			Title:           "Stale update",
+			Priority:        models.TaskPriorityLow,
+			Status:          models.TaskStatusInProgress,
+			ExpectedVersion: task.Version,
+		},
+	)
+	if !errors.Is(err, models.ErrNoRecord) {
+		t.Errorf(
+			"stale update error = %v, want models.ErrNoRecord",
+			err,
+		)
+	}
+}

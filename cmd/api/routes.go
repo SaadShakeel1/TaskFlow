@@ -26,5 +26,6 @@ func (app *application) routes() http.Handler {
 	mux.Handle("POST /projects/{id}/tasks", app.requireAuthentication(http.HandlerFunc(app.createTaskHandler)))
 	mux.Handle("GET /projects/{id}/tasks/{taskID}", app.requireAuthentication(http.HandlerFunc(app.getTaskHandler)))
 	mux.Handle("GET /projects/{id}/tasks", app.requireAuthentication(http.HandlerFunc(app.listTasksHandler)))
+	mux.Handle("PATCH /projects/{id}/tasks/{taskID}", app.requireAuthentication(http.HandlerFunc(app.updateTaskHandler)))
 	return app.recoverPanic(app.logRequest(secureHeaders(mux)))
 }

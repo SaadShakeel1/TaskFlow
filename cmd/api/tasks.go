@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -59,6 +62,410 @@ type taskListResponse struct {
 	Pagination paginationResponse `json:"pagination"`
 }
 
+type optionalInt64 struct {
+	Set   bool
+	Null  bool
+	Value int64
+}
+
+type optionalInt struct {
+	Set   bool
+	Null  bool
+	Value int
+}
+
+func (o *optionalInt64) UnmarshalJSON(data []byte) error {
+	o.Set = true
+
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		o.Null = true
+		return nil
+	}
+
+	return json.Unmarshal(data, &o.Value)
+}
+
+func (o *optionalInt) UnmarshalJSON(data []byte) error {
+	o.Set = true
+
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		o.Null = true
+		return nil
+	}
+
+	return json.Unmarshal(data, &o.Value)
+}
+
+type updateTaskRequest struct {
+	Title              optionalString `json:"title"`
+	Description        optionalString `json:"description"`
+	AcceptanceCriteria optionalString `json:"acceptanceCriteria"`
+	AssigneeID         optionalInt64  `json:"assigneeId"`
+	Priority           optionalString `json:"priority"`
+	DueDate            optionalString `json:"dueDate"`
+	EstimateMinutes    optionalInt    `json:"estimateMinutes"`
+	Status             optionalString `json:"status"`
+	BlockedReason      optionalString `json:"blockedReason"`
+	Version            int            `json:"version"`
+}
+
+func isValidTaskStatusValue(status models.TaskStatus) bool {
+	switch status {
+	case models.TaskStatusTODO,
+		models.TaskStatusInProgress,
+		models.TaskStatusBlocked,
+		models.TaskStatusDone:
+		return true
+	default:
+		return false
+	}
+}
+func canTransitionTaskStatus(current models.TaskStatus, next models.TaskStatus) bool {
+	if current == next {
+		return true
+	}
+
+	switch current {
+	case models.TaskStatusTODO:
+		return next == models.TaskStatusInProgress
+
+	case models.TaskStatusInProgress:
+		return next == models.TaskStatusBlocked ||
+			next == models.TaskStatusDone
+
+	case models.TaskStatusBlocked:
+		return next == models.TaskStatusInProgress ||
+			next == models.TaskStatusDone
+
+	case models.TaskStatusDone:
+		return false
+
+	default:
+		return false
+	}
+}
+func mergeTaskUpdate(task models.Task, request updateTaskRequest) (models.TaskUpdateInput, error) {
+	if request.Version < 1 {
+		return models.TaskUpdateInput{}, errors.New(
+			"version must be a positive integer",
+		)
+	}
+
+	update := models.TaskUpdateInput{
+		Title:              task.Title,
+		Description:        task.Description,
+		AcceptanceCriteria: task.AcceptanceCriteria,
+		AssigneeID:         task.AssigneeID,
+		Priority:           task.Priority,
+		DueDate:            task.DueDate,
+		EstimateMinutes:    task.EstimateMinutes,
+		Status:             task.Status,
+		BlockedReason:      task.BlockedReason,
+		ExpectedVersion:    request.Version,
+	}
+
+	if request.Title.Set {
+		if request.Title.Null {
+			return models.TaskUpdateInput{}, errors.New(
+				"task title cannot be null",
+			)
+		}
+
+		update.Title = strings.TrimSpace(request.Title.Value)
+	}
+
+	if update.Title == "" {
+		return models.TaskUpdateInput{}, errors.New(
+			"task title is required",
+		)
+	}
+
+	if utf8.RuneCountInString(update.Title) > maximumTaskTitleCharacters {
+		return models.TaskUpdateInput{}, errors.New(
+			"task title must not exceed 150 characters",
+		)
+	}
+
+	if request.Description.Set {
+		if request.Description.Null {
+			return models.TaskUpdateInput{}, errors.New(
+				"task description cannot be null",
+			)
+		}
+
+		update.Description = strings.TrimSpace(request.Description.Value)
+	}
+
+	if utf8.RuneCountInString(update.Description) >
+		maximumTaskDescriptionCharacters {
+		return models.TaskUpdateInput{}, errors.New(
+			"task description must not exceed 5000 characters",
+		)
+	}
+
+	if request.AcceptanceCriteria.Set {
+		if request.AcceptanceCriteria.Null {
+			return models.TaskUpdateInput{}, errors.New(
+				"acceptance criteria cannot be null",
+			)
+		}
+
+		update.AcceptanceCriteria = strings.TrimSpace(
+			request.AcceptanceCriteria.Value,
+		)
+	}
+
+	if utf8.RuneCountInString(update.AcceptanceCriteria) >
+		maximumTaskAcceptanceCriteriaCharacters {
+		return models.TaskUpdateInput{}, errors.New(
+			"acceptance criteria must not exceed 3000 characters",
+		)
+	}
+
+	if request.AssigneeID.Set {
+		if request.AssigneeID.Null {
+			update.AssigneeID = nil
+		} else {
+			if request.AssigneeID.Value < 1 {
+				return models.TaskUpdateInput{}, errors.New(
+					"assignee id must be a positive integer",
+				)
+			}
+
+			assigneeID := request.AssigneeID.Value
+			update.AssigneeID = &assigneeID
+		}
+	}
+
+	if request.Priority.Set {
+		if request.Priority.Null {
+			return models.TaskUpdateInput{}, errors.New(
+				"task priority cannot be null",
+			)
+		}
+
+		priority := models.TaskPriority(request.Priority.Value)
+		if !models.IsValidTaskPriority(priority) {
+			return models.TaskUpdateInput{}, errors.New(
+				"task priority is invalid",
+			)
+		}
+
+		update.Priority = priority
+	}
+
+	if request.DueDate.Set {
+		if request.DueDate.Null {
+			update.DueDate = nil
+		} else {
+			dueDate, err := parseTargetDate(&request.DueDate.Value)
+			if err != nil {
+				return models.TaskUpdateInput{}, errors.New(
+					"due date must use YYYY-MM-DD",
+				)
+			}
+
+			update.DueDate = dueDate
+		}
+	}
+
+	if request.EstimateMinutes.Set {
+		if request.EstimateMinutes.Null {
+			update.EstimateMinutes = nil
+		} else {
+			if request.EstimateMinutes.Value < 1 {
+				return models.TaskUpdateInput{}, errors.New(
+					"estimate minutes must be a positive integer",
+				)
+			}
+
+			estimate := request.EstimateMinutes.Value
+			update.EstimateMinutes = &estimate
+		}
+	}
+
+	if request.Status.Set {
+		if request.Status.Null {
+			return models.TaskUpdateInput{}, errors.New(
+				"task status cannot be null",
+			)
+		}
+
+		status := models.TaskStatus(request.Status.Value)
+		if !isValidTaskStatusValue(status) {
+			return models.TaskUpdateInput{}, errors.New(
+				"task status is invalid",
+			)
+		}
+
+		if !canTransitionTaskStatus(task.Status, status) {
+			return models.TaskUpdateInput{}, fmt.Errorf(
+				"cannot change task status from %q to %q",
+				task.Status,
+				status,
+			)
+		}
+
+		update.Status = status
+	}
+
+	if request.BlockedReason.Set {
+		if request.BlockedReason.Null {
+			update.BlockedReason = nil
+		} else {
+			reason := strings.TrimSpace(request.BlockedReason.Value)
+			update.BlockedReason = &reason
+		}
+	}
+
+	if update.Status == models.TaskStatusBlocked {
+		if update.BlockedReason == nil ||
+			strings.TrimSpace(*update.BlockedReason) == "" {
+			return models.TaskUpdateInput{}, errors.New(
+				"blocked tasks require a blocked reason",
+			)
+		}
+	} else {
+		update.BlockedReason = nil
+	}
+
+	return update, nil
+}
+
+func (app *application) updateTaskHandler(w http.ResponseWriter, r *http.Request) {
+	project, user, ok := app.projectForRequest(w, r)
+	if !ok {
+		return
+	}
+
+	taskID, err := strconv.ParseInt(r.PathValue("taskID"), 10, 64)
+	if err != nil || taskID < 1 {
+		app.clientError(
+			w,
+			http.StatusBadRequest,
+			"task id must be a positive integer",
+		)
+		return
+	}
+
+	task, err := app.tasks.GetByIDForUser(r.Context(), taskID, user.ID)
+	if err != nil {
+		if errors.Is(err, models.ErrNoRecord) {
+			app.notFound(w, "task not found")
+			return
+		}
+
+		app.serverError(w, err)
+		return
+	}
+
+	if task.ProjectID != project.ID {
+		app.notFound(w, "task not found")
+		return
+	}
+
+	canEdit, err := app.userCanEditProject(
+		r.Context(),
+		project,
+		user.ID,
+	)
+	if err != nil {
+		app.serverError(w, err)
+		return
+	}
+
+	if !canEdit {
+		app.clientError(
+			w,
+			http.StatusForbidden,
+			"project editor permission required",
+		)
+		return
+	}
+
+	var request updateTaskRequest
+
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+
+	if err := decoder.Decode(&request); err != nil {
+		app.clientError(
+			w,
+			http.StatusBadRequest,
+			"request body must be valid JSON",
+		)
+		return
+	}
+
+	update, err := mergeTaskUpdate(task, request)
+	if err != nil {
+		app.clientError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	updatedTask, err := app.tasks.UpdateByIDForUser(
+		r.Context(),
+		task.ID,
+		user.ID,
+		update,
+	)
+	if err != nil {
+		if errors.Is(err, models.ErrNoRecord) {
+			currentTask, currentErr := app.tasks.GetByIDForUser(
+				r.Context(),
+				task.ID,
+				user.ID,
+			)
+
+			if currentErr == nil &&
+				currentTask.Version != request.Version {
+				app.clientError(
+					w,
+					http.StatusConflict,
+					"task was changed; fetch the latest version and try again",
+				)
+				return
+			}
+
+			app.notFound(w, "task not found")
+			return
+		}
+
+		app.serverError(w, err)
+		return
+	}
+
+	if err := app.writeJSON(w, http.StatusOK, newTaskResponse(updatedTask)); err != nil {
+		app.errorLog.Printf(
+			"encode updated task response: %v",
+			err,
+		)
+	}
+}
+
+func (app *application) userCanEditProject(ctx context.Context, project models.Project, userID int64) (bool, error) {
+	if project.UserID == userID {
+		return true, nil
+	}
+
+	members, err := app.projectMembers.ListByProject(
+		ctx,
+		project.ID,
+	)
+	if err != nil {
+		return false, err
+	}
+
+	for _, member := range members {
+		if member.UserID == userID &&
+			member.Role == models.ProjectMemberRoleEditor {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
 func (app *application) createTaskHandler(w http.ResponseWriter, r *http.Request) {
 	project, user, ok := app.projectForRequest(w, r)
 	if !ok {
@@ -109,7 +516,6 @@ func (app *application) createTaskHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Omitted priority uses the business default from the database schema.
 	priority := models.TaskPriorityMedium
 	if request.Priority != nil {
 		priority = *request.Priority

@@ -60,6 +60,42 @@ type TaskCreateInput struct {
 	EstimateMinutes    *int
 }
 
+type TaskListOptions struct {
+	Page     int
+	PageSize int
+	Status   *TaskStatus
+	Priority *TaskPriority
+	Sort     TaskSort
+	Order    SortOrder
+}
+
+type TaskList struct {
+	Tasks      []Task
+	TotalItems int
+}
+
+type TaskUpdateInput struct {
+	Title              string
+	Description        string
+	AcceptanceCriteria string
+	AssigneeID         *int64
+	Priority           TaskPriority
+	DueDate            *time.Time
+	EstimateMinutes    *int
+	Status             TaskStatus
+	BlockedReason      *string
+	ExpectedVersion    int
+}
+
+type TaskSort string
+
+const (
+	TaskSortUpdatedAt TaskSort = "updatedAt"
+	TaskSortCreatedAt TaskSort = "createdAt"
+	TaskSortDueDate   TaskSort = "dueDate"
+	TaskSortPriority  TaskSort = "priority"
+)
+
 func IsValidTaskPriority(priority TaskPriority) bool {
 	switch priority {
 	case TaskPriorityLow, TaskPriorityMedium, TaskPriorityHigh, TaskPriorityUrgent:
@@ -258,29 +294,6 @@ func (m *TaskModel) GetByIDForUser(ctx context.Context, taskID int64, userID int
 	return task, nil
 }
 
-type TaskSort string
-
-const (
-	TaskSortUpdatedAt TaskSort = "updatedAt"
-	TaskSortCreatedAt TaskSort = "createdAt"
-	TaskSortDueDate   TaskSort = "dueDate"
-	TaskSortPriority  TaskSort = "priority"
-)
-
-type TaskListOptions struct {
-	Page     int
-	PageSize int
-	Status   *TaskStatus
-	Priority *TaskPriority
-	Sort     TaskSort
-	Order    SortOrder
-}
-
-type TaskList struct {
-	Tasks      []Task
-	TotalItems int
-}
-
 func isValidStatus(status TaskStatus) bool {
 	switch status {
 	case TaskStatusTODO, TaskStatusBlocked, TaskStatusDone, TaskStatusInProgress:
@@ -474,4 +487,123 @@ func (m *TaskModel) ListByProjectForUser(ctx context.Context, projectID int64, u
 		Tasks:      tasks,
 		TotalItems: totalItems,
 	}, nil
+}
+
+func (m *TaskModel) UpdateByIDForUser(ctx context.Context, taskID int64, userID int64, input TaskUpdateInput) (Task, error) {
+	if !IsValidTaskPriority(input.Priority) {
+		return Task{}, fmt.Errorf("invalid task priority: %q", input.Priority)
+	}
+
+	if !isValidStatus(input.Status) {
+		return Task{}, fmt.Errorf("invalid task status: %q", input.Status)
+	}
+
+	const query = `
+		UPDATE tasks t
+		SET 
+		title = $1,                                                      
+		description = $2,                                                
+		acceptance_criteria = $3,                                        
+		assignee_id = $4,                                                
+		priority = $5,                                                   
+		due_date = $6,                                                   
+		estimate_minutes = $7,                                           
+		status = $8,       
+		blocked_reason = CASE 
+			WHEN $8 = 'blocked' THEN $9
+			ELSE NULL
+		END,
+		started_at = CASE
+			WHEN $8 in ('in_progress','blocked','done') 
+			AND started_at IS NULL THEN NOW()
+			ELSE t.started_at
+		END,
+		completed_at = CASE                                              
+			WHEN $8 = 'done'                                         
+			THEN COALESCE(t.completed_at, NOW())                     
+			ELSE NULL                                                
+		END,                                                             
+		version = t.version + 1,                                         
+		updated_at = NOW()                                               
+		WHERE t.id = $10
+		AND t.version = $11
+		AND EXISTS (                                                             
+			SELECT 1                                                         
+			FROM projects p                                                  
+			WHERE p.id = t.project_id                                        
+			AND (                                                            
+				p.user_id = $12                                          
+				OR EXISTS (                                              
+					SELECT 1                                         
+					FROM project_members pm                          
+					WHERE pm.project_id = p.id                       
+					AND pm.user_id = $12                             
+					AND pm.role = 'editor'                           
+			)                                                        
+		)                                                                
+	)     
+	RETURNING                                                                
+		t.id,                                                            
+		t.project_id,                                                    
+		t.created_by_user_id,                                            
+		t.assignee_id,                                                   
+		t.title,                                                         
+		t.description,                                                   
+		t.acceptance_criteria,                                           
+		t.status,                                                        
+		t.priority,                                                      
+		t.due_date,                                                      
+		t.estimate_minutes,                                              
+		t.blocked_reason,                                                
+		t.started_at,                                                    
+		t.completed_at,                                                  
+		t.version,                                                       
+		t.created_at,                                                    
+		t.updated_at   
+
+	`
+	var task Task
+	err := m.DB.QueryRowContext(
+		ctx,
+		query,
+		input.Title,
+		input.Description,
+		input.AcceptanceCriteria,
+		input.AssigneeID,
+		string(input.Priority),
+		input.DueDate,
+		input.EstimateMinutes,
+		string(input.Status),
+		input.BlockedReason,
+		taskID,
+		input.ExpectedVersion,
+		userID,
+	).Scan(
+		&task.ID,
+		&task.ProjectID,
+		&task.CreatedByUserID,
+		&task.AssigneeID,
+		&task.Title,
+		&task.Description,
+		&task.AcceptanceCriteria,
+		&task.Status,
+		&task.Priority,
+		&task.DueDate,
+		&task.EstimateMinutes,
+		&task.BlockedReason,
+		&task.StartedAt,
+		&task.CompletedAt,
+		&task.Version,
+		&task.CreatedAt,
+		&task.UpdatedAt,
+	)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Task{}, ErrNoRecord
+		}
+		return Task{}, fmt.Errorf("update task by ID for user: %w", err)
+	}
+
+	return task, nil
 }

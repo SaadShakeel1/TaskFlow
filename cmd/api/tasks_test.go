@@ -1031,3 +1031,274 @@ func TestListTasksEndpointRejectsInvalidQueryParameters(t *testing.T) {
 		})
 	}
 }
+
+func TestUpdateTaskEndpoint(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() {
+		testutil.ResetDatabase(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+	owner, ownerToken := createAuthenticatedTestUser(t, app, ctx)
+
+	project, err := app.projects.Create(
+		ctx,
+		owner.ID,
+		"Update API project",
+		"Project for update endpoint testing",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	task, err := app.tasks.Create(
+		ctx,
+		project.ID,
+		owner.ID,
+		models.TaskCreateInput{
+			Title:    "Original task",
+			Priority: models.TaskPriorityMedium,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		fmt.Sprintf("/projects/%d/tasks/%d", project.ID, task.ID),
+		strings.NewReader(`{
+			"title": "Updated task",
+			"description": "Updated description",
+			"priority": "high",
+			"status": "in_progress",
+			"version": 1
+		}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: ownerToken,
+	})
+
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf(
+			"status code = %d, want %d",
+			recorder.Code,
+			http.StatusOK,
+		)
+	}
+
+	var response taskResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Title != "Updated task" {
+		t.Errorf(
+			"title = %q, want %q",
+			response.Title,
+			"Updated task",
+		)
+	}
+
+	if response.Status != models.TaskStatusInProgress {
+		t.Errorf(
+			"status = %q, want %q",
+			response.Status,
+			models.TaskStatusInProgress,
+		)
+	}
+
+	if response.Priority != models.TaskPriorityHigh {
+		t.Errorf(
+			"priority = %q, want %q",
+			response.Priority,
+			models.TaskPriorityHigh,
+		)
+	}
+
+	if response.StartedAt == nil {
+		t.Error("startedAt is nil, want timestamp")
+	}
+
+	if response.Version != 2 {
+		t.Errorf("version = %d, want 2", response.Version)
+	}
+
+	staleRequest := httptest.NewRequest(
+		http.MethodPatch,
+		fmt.Sprintf("/projects/%d/tasks/%d", project.ID, task.ID),
+		strings.NewReader(`{
+			"title": "Stale update",
+			"version": 1
+		}`),
+	)
+	staleRequest.Header.Set("Content-Type", "application/json")
+	staleRequest.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: ownerToken,
+	})
+
+	staleRecorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(staleRecorder, staleRequest)
+
+	if staleRecorder.Code != http.StatusConflict {
+		t.Errorf(
+			"stale status code = %d, want %d",
+			staleRecorder.Code,
+			http.StatusConflict,
+		)
+	}
+}
+
+func TestUpdateTaskEndpointRejectsViewer(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() {
+		testutil.ResetDatabase(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+
+	owner, _ := createAuthenticatedTestUser(t, app, ctx)
+	viewer, viewerToken := createProjectMemberTestUser(
+		t,
+		app,
+		ctx,
+		"update-viewer@example.com",
+		"Update Viewer",
+	)
+
+	project, err := app.projects.Create(
+		ctx,
+		owner.ID,
+		"Viewer update project",
+		"Viewer must not update tasks",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	if _, err := app.projectMembers.Create(
+		ctx,
+		project.ID,
+		viewer.ID,
+		models.ProjectMemberRoleViewer,
+	); err != nil {
+		t.Fatalf("create viewer membership: %v", err)
+	}
+
+	task, err := app.tasks.Create(
+		ctx,
+		project.ID,
+		owner.ID,
+		models.TaskCreateInput{
+			Title:    "Protected task",
+			Priority: models.TaskPriorityMedium,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		fmt.Sprintf("/projects/%d/tasks/%d", project.ID, task.ID),
+		strings.NewReader(`{
+			"title": "Viewer update",
+			"version": 1
+		}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: viewerToken,
+	})
+
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Errorf(
+			"status code = %d, want %d",
+			recorder.Code,
+			http.StatusForbidden,
+		)
+	}
+}
+
+func TestUpdateTaskEndpointRejectsInvalidWorkflow(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() {
+		testutil.ResetDatabase(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+	owner, ownerToken := createAuthenticatedTestUser(t, app, ctx)
+
+	project, err := app.projects.Create(
+		ctx,
+		owner.ID,
+		"Workflow project",
+		"Project for workflow validation",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	task, err := app.tasks.Create(
+		ctx,
+		project.ID,
+		owner.ID,
+		models.TaskCreateInput{
+			Title:    "Workflow task",
+			Priority: models.TaskPriorityMedium,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		fmt.Sprintf("/projects/%d/tasks/%d", project.ID, task.ID),
+		strings.NewReader(`{
+			"status": "blocked",
+			"version": 1
+		}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: ownerToken,
+	})
+
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Errorf(
+			"status code = %d, want %d",
+			recorder.Code,
+			http.StatusBadRequest,
+		)
+	}
+}

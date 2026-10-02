@@ -756,3 +756,74 @@ func (app *application) listTasksHandler(w http.ResponseWriter, r *http.Request)
 		app.errorLog.Printf("encode task list response: %v", err)
 	}
 }
+
+func (app *application) deleteTaskHandler(w http.ResponseWriter, r *http.Request) {
+	project, user, ok := app.projectForRequest(w, r)
+	if !ok {
+		return
+	}
+
+	taskID, err := strconv.ParseInt(r.PathValue("taskID"), 10, 64)
+	if err != nil || taskID < 1 {
+		app.clientError(w, http.StatusBadRequest, "task id must be a positive integer")
+		return
+	}
+
+	task, err := app.tasks.GetByIDForUser(r.Context(), taskID, user.ID)
+
+	if err != nil {
+		if errors.Is(err, models.ErrNoRecord) {
+			app.notFound(w, "task not found")
+			return
+		}
+		app.serverError(w, err)
+		return
+	}
+
+	if task.ProjectID != project.ID {
+		app.notFound(w, "task not found")
+		return
+	}
+
+	canEdit, err := app.userCanEditProject(r.Context(), project, user.ID)
+	if err != nil {
+		app.serverError(w, err)
+		return
+	}
+
+	if !canEdit {
+		app.clientError(w, http.StatusForbidden, "project editor permission required")
+		return
+	}
+
+	versionValue := r.URL.Query().Get("version")
+
+	if versionValue == "" {
+		app.clientError(w, http.StatusBadRequest, "version is required")
+		return
+	}
+
+	expectedVersion, err := strconv.Atoi(versionValue)
+	if err != nil || expectedVersion < 1 {
+		app.clientError(w, http.StatusBadRequest, "version must be positive integer")
+		return
+	}
+
+	err = app.tasks.DeleteByIDForUser(r.Context(), task.ID, user.ID, expectedVersion)
+
+	if err != nil {
+		if errors.Is(err, models.ErrNoRecord) {
+			currentTask, currentErr := app.tasks.GetByIDForUser(r.Context(), task.ID, user.ID)
+			if currentErr == nil && currentTask.Version != expectedVersion {
+				app.clientError(w, http.StatusConflict, "task was changed; fetch the latest version and try again")
+				return
+			}
+
+			app.notFound(w, "task not found")
+			return
+		}
+		app.serverError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

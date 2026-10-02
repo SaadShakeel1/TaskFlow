@@ -607,3 +607,47 @@ func (m *TaskModel) UpdateByIDForUser(ctx context.Context, taskID int64, userID 
 
 	return task, nil
 }
+
+func (m *TaskModel) DeleteByIDForUser(ctx context.Context, taskID int64, userID int64, expectedVersion int) error {
+	if expectedVersion < 1 {
+		return fmt.Errorf("version must be a positive integer")
+	}
+
+	const query = `
+	DELETE FROM tasks t                                                      
+		WHERE t.id = $1                                                          
+		AND t.version = $2                                                       
+		AND EXISTS (                                                             
+			SELECT 1                                                         
+			FROM projects p                                                  
+			WHERE p.id = t.project_id                                        
+			AND (                                                            
+				p.user_id = $3                                           
+				OR EXISTS (                                              
+					SELECT 1                                         
+					FROM project_members pm                          
+					WHERE pm.project_id = p.id                       
+					AND pm.user_id = $3                              
+					AND pm.role = 'editor'                           
+				)                                                        
+			)                                                                
+		)
+	`
+	result, err := m.DB.ExecContext(ctx, query, taskID, expectedVersion, userID)
+
+	if err != nil {
+		return fmt.Errorf("delete task by ID for user: %w", err)
+	}
+
+	rowAffected, err := result.RowsAffected()
+
+	if err != nil {
+		return fmt.Errorf("get deleted task row count: %w", err)
+	}
+
+	if rowAffected == 0 {
+		return ErrNoRecord
+	}
+
+	return nil
+}

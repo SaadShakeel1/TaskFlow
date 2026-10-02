@@ -1302,3 +1302,144 @@ func TestUpdateTaskEndpointRejectsInvalidWorkflow(t *testing.T) {
 		)
 	}
 }
+
+func TestDeleteTaskEndpoint(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+	owner, ownerToken := createAuthenticatedTestUser(t, app, ctx)
+
+	project, err := app.projects.Create(ctx, owner.ID, "Delete API project", "Project for delete endpoint testing", nil)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	task, err := app.tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Task to delete",
+		Priority: models.TaskPriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/projects/%d/tasks/%d?version=%d", project.ID, task.ID, task.Version), nil)
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: ownerToken})
+
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status code = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+
+	getRequest := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/projects/%d/tasks/%d", project.ID, task.ID), nil)
+	getRequest.AddCookie(&http.Cookie{Name: sessionCookieName, Value: ownerToken})
+
+	getRecorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(getRecorder, getRequest)
+
+	if getRecorder.Code != http.StatusNotFound {
+		t.Errorf("deleted task status code = %d, want %d", getRecorder.Code, http.StatusNotFound)
+	}
+}
+
+func TestDeleteTaskEndpointRejectsStaleVersion(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+	owner, ownerToken := createAuthenticatedTestUser(t, app, ctx)
+
+	project, err := app.projects.Create(ctx, owner.ID, "Stale delete project", "Project for stale delete testing", nil)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	task, err := app.tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Stale delete task",
+		Priority: models.TaskPriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	_, err = app.tasks.UpdateByIDForUser(ctx, task.ID, owner.ID, models.TaskUpdateInput{
+		Title:           "Changed before delete",
+		Priority:        task.Priority,
+		Status:          task.Status,
+		ExpectedVersion: task.Version,
+	})
+	if err != nil {
+		t.Fatalf("update task: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/projects/%d/tasks/%d?version=1", project.ID, task.ID), nil)
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: ownerToken})
+
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusConflict {
+		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusConflict)
+	}
+}
+
+func TestDeleteTaskEndpointRejectsViewerAndInvalidVersion(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+
+	owner, ownerToken := createAuthenticatedTestUser(t, app, ctx)
+	viewer, viewerToken := createProjectMemberTestUser(t, app, ctx, "delete-viewer@example.com", "Delete Viewer")
+
+	project, err := app.projects.Create(ctx, owner.ID, "Permission delete project", "Project for delete permission testing", nil)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	if _, err := app.projectMembers.Create(ctx, project.ID, viewer.ID, models.ProjectMemberRoleViewer); err != nil {
+		t.Fatalf("create viewer membership: %v", err)
+	}
+
+	task, err := app.tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Protected delete task",
+		Priority: models.TaskPriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	viewerRequest := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/projects/%d/tasks/%d?version=1", project.ID, task.ID), nil)
+	viewerRequest.AddCookie(&http.Cookie{Name: sessionCookieName, Value: viewerToken})
+
+	viewerRecorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(viewerRecorder, viewerRequest)
+
+	if viewerRecorder.Code != http.StatusForbidden {
+		t.Errorf("viewer status code = %d, want %d", viewerRecorder.Code, http.StatusForbidden)
+	}
+
+	invalidVersionRequest := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/projects/%d/tasks/%d", project.ID, task.ID), nil)
+	invalidVersionRequest.AddCookie(&http.Cookie{Name: sessionCookieName, Value: ownerToken})
+
+	invalidVersionRecorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(invalidVersionRecorder, invalidVersionRequest)
+
+	if invalidVersionRecorder.Code != http.StatusBadRequest {
+		t.Errorf("invalid version status code = %d, want %d", invalidVersionRecorder.Code, http.StatusBadRequest)
+	}
+}

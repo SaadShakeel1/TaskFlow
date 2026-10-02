@@ -545,3 +545,72 @@ func TestTaskModelUpdateByIDForUser(t *testing.T) {
 		)
 	}
 }
+
+func TestTaskModelDeleteByIDForUser(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	users := &models.UserModel{DB: db}
+	projects := &models.ProjectModel{DB: db}
+	members := &models.ProjectMemberModel{DB: db}
+	tasks := &models.TaskModel{DB: db}
+
+	owner, err := users.Create(ctx, "delete-owner@example.com", "Delete Owner", "correct-password")
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+
+	viewer, err := users.Create(ctx, "delete-viewer@example.com", "Delete Viewer", "correct-password")
+	if err != nil {
+		t.Fatalf("create viewer: %v", err)
+	}
+
+	project, err := projects.Create(ctx, owner.ID, "Delete project", "Project for delete testing", nil)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	if _, err := members.Create(ctx, project.ID, viewer.ID, models.ProjectMemberRoleViewer); err != nil {
+		t.Fatalf("create viewer membership: %v", err)
+	}
+
+	staleTask, err := tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Stale delete task",
+		Priority: models.TaskPriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("create stale task: %v", err)
+	}
+
+	if err := tasks.DeleteByIDForUser(ctx, staleTask.ID, owner.ID, staleTask.Version+1); !errors.Is(err, models.ErrNoRecord) {
+		t.Errorf("stale delete error = %v, want models.ErrNoRecord", err)
+	}
+
+	if _, err := tasks.GetByIDForUser(ctx, staleTask.ID, owner.ID); err != nil {
+		t.Fatalf("stale task should still exist: %v", err)
+	}
+
+	viewerTask, err := tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Viewer delete task",
+		Priority: models.TaskPriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("create viewer task: %v", err)
+	}
+
+	if err := tasks.DeleteByIDForUser(ctx, viewerTask.ID, viewer.ID, viewerTask.Version); !errors.Is(err, models.ErrNoRecord) {
+		t.Errorf("viewer delete error = %v, want models.ErrNoRecord", err)
+	}
+
+	if err := tasks.DeleteByIDForUser(ctx, viewerTask.ID, owner.ID, viewerTask.Version); err != nil {
+		t.Fatalf("owner delete: %v", err)
+	}
+
+	if _, err := tasks.GetByIDForUser(ctx, viewerTask.ID, owner.ID); !errors.Is(err, models.ErrNoRecord) {
+		t.Errorf("deleted task lookup error = %v, want models.ErrNoRecord", err)
+	}
+}

@@ -22,6 +22,11 @@ func (app *application) routes() http.Handler {
 	mux.Handle("PATCH /projects/{id}/members/{userID}", app.requireAuthentication(http.HandlerFunc(app.updateProjectMemberHandler)))
 	mux.Handle("DELETE /projects/{id}/members/{userID}", app.requireAuthentication(http.HandlerFunc(app.deleteProjectMemberHandler)))
 	mux.Handle("PATCH /projects/{id}", app.requireAuthentication(http.HandlerFunc(app.updateProjectHandler)))
-	mux.Handle("DELETE /projects/{id}",app.requireAuthentication(http.HandlerFunc(app.deleteProjectHandler)))
+	mux.Handle("DELETE /projects/{id}", app.requireAuthentication(http.HandlerFunc(app.deleteProjectHandler)))
+	mux.Handle("POST /projects/{id}/tasks", app.requireAuthentication(http.HandlerFunc(app.createTaskHandler)))
+	mux.Handle("GET /projects/{id}/tasks/{taskID}", app.requireAuthentication(http.HandlerFunc(app.getTaskHandler)))
+	mux.Handle("GET /projects/{id}/tasks", app.requireAuthentication(http.HandlerFunc(app.listTasksHandler)))
+	mux.Handle("PATCH /projects/{id}/tasks/{taskID}", app.requireAuthentication(http.HandlerFunc(app.updateTaskHandler)))
+	mux.Handle("DELETE /projects/{id}/tasks/{taskID}", app.requireAuthentication(http.HandlerFunc(app.deleteTaskHandler)))
 	return app.recoverPanic(app.logRequest(secureHeaders(mux)))
 }

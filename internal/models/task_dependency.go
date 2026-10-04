@@ -225,3 +225,68 @@ func (m *TaskDependencyModel) ListByTask(ctx context.Context, taskID int64, user
 
 	return dependencies, nil
 }
+
+func (m *TaskDependencyModel) Delete(ctx context.Context, taskID, dependsOnTaskID, userID int64) error {
+	if taskID < 1 || dependsOnTaskID < 1 || userID < 1 {
+		return fmt.Errorf("IDs must be positive integers")
+	}
+
+	tx, err := m.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delete dependency transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	permissionQuery := `
+		SELECT EXISTS (
+			SELECT 1
+			FROM tasks dependent
+			JOIN tasks prerequisite ON prerequisite.id = $2 AND prerequisite.project_id = dependent.project_id
+			JOIN projects p ON p.id = dependent.project_id
+			WHERE dependent.id = $1
+			AND (
+				p.user_id = $3
+				OR EXISTS (
+					SELECT 1
+					FROM project_members pm
+					WHERE pm.project_id = p.id
+					AND pm.user_id = $3
+					AND pm.role = 'editor'
+				)
+			)
+		)`
+
+	var canEdit bool
+	if err := tx.QueryRowContext(ctx, permissionQuery, taskID, dependsOnTaskID, userID).Scan(&canEdit); err != nil {
+		return fmt.Errorf("check dependency delete permission: %w", err)
+	}
+
+	if !canEdit {
+		return ErrNoRecord
+	}
+
+	deleteQuery := `
+		DELETE FROM task_dependencies
+		WHERE task_id = $1
+		AND depends_on_task_id = $2`
+
+	result, err := tx.ExecContext(ctx, deleteQuery, taskID, dependsOnTaskID)
+	if err != nil {
+		return fmt.Errorf("delete task dependency: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check deleted dependency: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return ErrNoRecord
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete dependency: %w", err)
+	}
+
+	return nil
+}

@@ -98,7 +98,6 @@ func (app *application) createTaskDependencyHandler(w http.ResponseWriter, r *ht
 	}
 }
 
-
 type taskDependencyListResponse struct {
 	Dependencies []taskDependencyResponse `json:"dependencies"`
 }
@@ -164,4 +163,60 @@ func (app *application) listTaskDependenciesHandler(w http.ResponseWriter, r *ht
 	if err := app.writeJSON(w, http.StatusOK, response); err != nil {
 		app.errorLog.Printf("encode task dependency list response: %v", err)
 	}
+}
+
+func (app *application) deleteTaskDependencyHandler(w http.ResponseWriter, r *http.Request) {
+	project, user, ok := app.projectForRequest(w, r)
+	if !ok {
+		return
+	}
+
+	taskID, err := strconv.ParseInt(r.PathValue("taskID"), 10, 64)
+	if err != nil || taskID < 1 {
+		app.clientError(w, http.StatusBadRequest, "task id must be a positive integer")
+		return
+	}
+
+	dependsOnTaskID, err := strconv.ParseInt(r.PathValue("dependsOnTaskID"), 10, 64)
+	if err != nil || dependsOnTaskID < 1 {
+		app.clientError(w, http.StatusBadRequest, "depends-on task id must be a positive integer")
+		return
+	}
+
+	task, err := app.tasks.GetByIDForUser(r.Context(), taskID, user.ID)
+	if err != nil {
+		if errors.Is(err, models.ErrNoRecord) {
+			app.notFound(w, "task not found")
+			return
+		}
+		app.serverError(w, err)
+		return
+	}
+
+	if task.ProjectID != project.ID {
+		app.notFound(w, "task not found")
+		return
+	}
+
+	canEdit, err := app.userCanEditProject(r.Context(), project, user.ID)
+	if err != nil {
+		app.serverError(w, err)
+		return
+	}
+	if !canEdit {
+		app.clientError(w, http.StatusForbidden, "project editor permission required")
+		return
+	}
+
+	err = app.taskDependencies.Delete(r.Context(), task.ID, dependsOnTaskID, user.ID)
+	if err != nil {
+		if errors.Is(err, models.ErrNoRecord) {
+			app.notFound(w, "task dependency not found")
+			return
+		}
+		app.serverError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

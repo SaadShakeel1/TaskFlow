@@ -327,3 +327,220 @@ func TestListTaskDependenciesEndpointRejectsInaccessibleProject(t *testing.T) {
 		)
 	}
 }
+
+func TestDeleteTaskDependencyEndpoint(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+	owner, ownerToken := createAuthenticatedTestUser(t, app, ctx)
+
+	project, err := app.projects.Create(
+		ctx,
+		owner.ID,
+		"Delete dependency project",
+		"Project for deleting dependencies",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	taskA, err := app.tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Task A",
+		Priority: models.TaskPriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("create task A: %v", err)
+	}
+
+	taskB, err := app.tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Task B",
+		Priority: models.TaskPriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("create task B: %v", err)
+	}
+
+	if _, err := app.taskDependencies.Create(ctx, taskB.ID, taskA.ID, owner.ID); err != nil {
+		t.Fatalf("create dependency: %v", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodDelete,
+		fmt.Sprintf(
+			"/projects/%d/tasks/%d/dependencies/%d",
+			project.ID,
+			taskB.ID,
+			taskA.ID,
+		),
+		nil,
+	)
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: ownerToken,
+	})
+
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status code = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+
+	// Confirm that the relationship was actually removed.
+	dependencies, err := app.taskDependencies.ListByTask(ctx, taskB.ID, owner.ID)
+	if err != nil {
+		t.Fatalf("list dependencies after delete: %v", err)
+	}
+
+	if len(dependencies) != 0 {
+		t.Errorf("dependency count after delete = %d, want 0", len(dependencies))
+	}
+}
+
+func TestDeleteTaskDependencyEndpointRejectsViewer(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+	owner, _ := createAuthenticatedTestUser(t, app, ctx)
+	viewer, viewerToken := createProjectMemberTestUser(
+		t,
+		app,
+		ctx,
+		"delete-dependency-viewer@example.com",
+		"Delete Dependency Viewer",
+	)
+
+	project, err := app.projects.Create(
+		ctx,
+		owner.ID,
+		"Viewer delete project",
+		"Viewer cannot delete dependencies",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	if _, err := app.projectMembers.Create(
+		ctx,
+		project.ID,
+		viewer.ID,
+		models.ProjectMemberRoleViewer,
+	); err != nil {
+		t.Fatalf("create viewer membership: %v", err)
+	}
+
+	taskA, err := app.tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Task A",
+		Priority: models.TaskPriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("create task A: %v", err)
+	}
+
+	taskB, err := app.tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Task B",
+		Priority: models.TaskPriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("create task B: %v", err)
+	}
+
+	if _, err := app.taskDependencies.Create(ctx, taskB.ID, taskA.ID, owner.ID); err != nil {
+		t.Fatalf("create dependency: %v", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodDelete,
+		fmt.Sprintf(
+			"/projects/%d/tasks/%d/dependencies/%d",
+			project.ID,
+			taskB.ID,
+			taskA.ID,
+		),
+		nil,
+	)
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: viewerToken,
+	})
+
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+}
+
+func TestDeleteTaskDependencyEndpointReturnsNotFoundForMissingDependency(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+	owner, ownerToken := createAuthenticatedTestUser(t, app, ctx)
+
+	project, err := app.projects.Create(
+		ctx,
+		owner.ID,
+		"Missing dependency project",
+		"Project for missing dependency testing",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	taskA, err := app.tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Task A",
+		Priority: models.TaskPriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("create task A: %v", err)
+	}
+
+	taskB, err := app.tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Task B",
+		Priority: models.TaskPriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("create task B: %v", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodDelete,
+		fmt.Sprintf(
+			"/projects/%d/tasks/%d/dependencies/%d",
+			project.ID,
+			taskB.ID,
+			taskA.ID,
+		),
+		nil,
+	)
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: ownerToken,
+	})
+
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusNotFound)
+	}
+}

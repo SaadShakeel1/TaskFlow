@@ -7,4 +7,6 @@ var (
 	ErrDuplicateEmail                = errors.New("models: duplicate email")
 	ErrDuplicateProjectMember        = errors.New("models: duplicate project member")
 	ErrInvalidEmailVerificationToken = errors.New("models: invalid or expired email verification token")
+	ErrDuplicateTaskDependency       = errors.New("models: duplicate task dependency")
+	ErrTaskDependencyCycle           = errors.New("models: task dependency would create a cycle")
 )

@@ -97,3 +97,71 @@ func (app *application) createTaskDependencyHandler(w http.ResponseWriter, r *ht
 		app.errorLog.Printf("encode task dependency response: %v", err)
 	}
 }
+
+
+type taskDependencyListResponse struct {
+	Dependencies []taskDependencyResponse `json:"dependencies"`
+}
+
+func (app *application) listTaskDependenciesHandler(w http.ResponseWriter, r *http.Request) {
+	project, user, ok := app.projectForRequest(w, r)
+	if !ok {
+		return
+	}
+
+	taskID, err := strconv.ParseInt(r.PathValue("taskID"), 10, 64)
+	if err != nil || taskID < 1 {
+		app.clientError(w, http.StatusBadRequest, "task id must be a positive integer")
+		return
+	}
+
+	task, err := app.tasks.GetByIDForUser(r.Context(), taskID, user.ID)
+	if err != nil {
+		if errors.Is(err, models.ErrNoRecord) {
+			app.notFound(w, "task not found")
+			return
+		}
+
+		app.serverError(w, err)
+		return
+	}
+
+	if task.ProjectID != project.ID {
+		app.notFound(w, "task not found")
+		return
+	}
+
+	dependencies, err := app.taskDependencies.ListByTask(
+		r.Context(),
+		task.ID,
+		user.ID,
+	)
+	if err != nil {
+		if errors.Is(err, models.ErrNoRecord) {
+			app.notFound(w, "task not found")
+			return
+		}
+
+		app.serverError(w, err)
+		return
+	}
+
+	response := taskDependencyListResponse{
+		Dependencies: make(
+			[]taskDependencyResponse,
+			0,
+			len(dependencies),
+		),
+	}
+
+	for _, dependency := range dependencies {
+		response.Dependencies = append(
+			response.Dependencies,
+			newTaskDependencyResponse(dependency),
+		)
+	}
+
+	if err := app.writeJSON(w, http.StatusOK, response); err != nil {
+		app.errorLog.Printf("encode task dependency list response: %v", err)
+	}
+}

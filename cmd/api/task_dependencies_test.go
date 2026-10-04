@@ -169,3 +169,161 @@ func TestCreateTaskDependencyEndpointRejectsViewer(t *testing.T) {
 		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusForbidden)
 	}
 }
+
+func TestListTaskDependenciesEndpoint(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+	owner, ownerToken := createAuthenticatedTestUser(t, app, ctx)
+
+	project, err := app.projects.Create(
+		ctx,
+		owner.ID,
+		"List dependency project",
+		"Project for listing dependencies",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	taskA, err := app.tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Task A",
+		Priority: models.TaskPriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("create task A: %v", err)
+	}
+
+	taskB, err := app.tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Task B",
+		Priority: models.TaskPriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("create task B: %v", err)
+	}
+
+	taskC, err := app.tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Task C",
+		Priority: models.TaskPriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("create task C: %v", err)
+	}
+
+	// Task B depends on both Task A and Task C.
+	if _, err := app.taskDependencies.Create(ctx, taskB.ID, taskA.ID, owner.ID); err != nil {
+		t.Fatalf("create dependency B -> A: %v", err)
+	}
+
+	if _, err := app.taskDependencies.Create(ctx, taskB.ID, taskC.ID, owner.ID); err != nil {
+		t.Fatalf("create dependency B -> C: %v", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		fmt.Sprintf("/projects/%d/tasks/%d/dependencies", project.ID, taskB.ID),
+		nil,
+	)
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: ownerToken,
+	})
+
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	var response taskDependencyListResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if len(response.Dependencies) != 2 {
+		t.Fatalf("dependency count = %d, want 2", len(response.Dependencies))
+	}
+
+	// Check both prerequisite task IDs without depending on row order.
+	found := map[int64]bool{}
+
+	for _, dependency := range response.Dependencies {
+		found[dependency.DependsOnTaskID] = true
+	}
+
+	if !found[taskA.ID] {
+		t.Errorf("response does not contain dependency on task A")
+	}
+
+	if !found[taskC.ID] {
+		t.Errorf("response does not contain dependency on task C")
+	}
+}
+
+func TestListTaskDependenciesEndpointRejectsInaccessibleProject(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+
+	owner, _ := createAuthenticatedTestUser(t, app, ctx)
+	_, outsiderToken := createProjectMemberTestUser(
+		t,
+		app,
+		ctx,
+		"dependency-outsider@example.com",
+		"Dependency Outsider",
+	)
+
+	project, err := app.projects.Create(
+		ctx,
+		owner.ID,
+		"Private dependency project",
+		"Private project",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	task, err := app.tasks.Create(ctx, project.ID, owner.ID, models.TaskCreateInput{
+		Title:    "Private task",
+		Priority: models.TaskPriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		fmt.Sprintf("/projects/%d/tasks/%d/dependencies", project.ID, task.ID),
+		nil,
+	)
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: outsiderToken,
+	})
+
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, request)
+
+	// The outsider should not learn whether this project or task exists.
+	if recorder.Code != http.StatusNotFound {
+		t.Errorf(
+			"status code = %d, want %d",
+			recorder.Code,
+			http.StatusNotFound,
+		)
+	}
+}

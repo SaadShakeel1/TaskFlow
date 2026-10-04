@@ -166,3 +166,62 @@ func (m *TaskDependencyModel) Create(
 
 	return dependency, nil
 }
+
+func (m *TaskDependencyModel) ListByTask(ctx context.Context, taskID int64, userID int64) ([]TaskDependency, error) {
+	if taskID < 1 || userID < 1 {
+		return nil, fmt.Errorf("IDs must be positive integers")
+	}
+
+	accessQuery := `
+		SELECT EXISTS (
+			SELECT 1
+			FROM tasks t
+			JOIN projects p ON p.id = t.project_id
+			WHERE t.id = $1
+			AND (
+				p.user_id = $2
+				OR EXISTS (
+					SELECT 1
+					FROM project_members pm
+					WHERE pm.project_id = p.id
+					AND pm.user_id = $2
+				)
+			)
+		)`
+
+	var canView bool
+	if err := m.DB.QueryRowContext(ctx, accessQuery, taskID, userID).Scan(&canView); err != nil {
+		return nil, fmt.Errorf("check task dependency access: %w", err)
+	}
+
+	if !canView {
+		return nil, ErrNoRecord
+	}
+
+	listQuery := `
+		SELECT task_id, depends_on_task_id, created_at
+		FROM task_dependencies
+		WHERE task_id = $1
+		ORDER BY created_at ASC, depends_on_task_id ASC`
+
+	rows, err := m.DB.QueryContext(ctx, listQuery, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("list task dependencies: %w", err)
+	}
+	defer rows.Close()
+
+	dependencies := make([]TaskDependency, 0)
+	for rows.Next() {
+		var dependency TaskDependency
+		if err := rows.Scan(&dependency.TaskID, &dependency.DependsOnTaskID, &dependency.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan task dependency: %w", err)
+		}
+		dependencies = append(dependencies, dependency)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate task dependencies: %w", err)
+	}
+
+	return dependencies, nil
+}

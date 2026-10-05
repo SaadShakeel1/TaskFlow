@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"runtime/debug"
+
+	"github.com/SaadShakeel1/TaskFlow/internal/models"
 )
 
 func (app *application) serverError(w http.ResponseWriter, err error) {
@@ -33,4 +36,15 @@ func (app *application) writeJSON(w http.ResponseWriter, status int, data any) e
 
 	_, err = w.Write(response)
 	return err
+}
+
+func (app *application) recordActivity(
+	ctx context.Context,
+	input models.ActivityCreateInput,
+) {
+	_, err := app.activity.Create(ctx, input)
+	if err != nil {
+		// The main mutation already succeeded, so log the audit failure.
+		app.errorLog.Printf("record activity: %v", err)
+	}
 }

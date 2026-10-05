@@ -93,6 +93,15 @@ func (app *application) createTaskDependencyHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
+	dependencyTaskID := dependency.TaskID
+	app.recordActivity(r.Context(), models.ActivityCreateInput{
+		ProjectID:  project.ID,
+		UserID:     &user.ID,
+		Action:     "created",
+		EntityType: "dependency",
+		EntityID:   &dependencyTaskID,
+	})
+
 	if err := app.writeJSON(w, http.StatusCreated, newTaskDependencyResponse(dependency)); err != nil {
 		app.errorLog.Printf("encode task dependency response: %v", err)
 	}
@@ -217,6 +226,14 @@ func (app *application) deleteTaskDependencyHandler(w http.ResponseWriter, r *ht
 		app.serverError(w, err)
 		return
 	}
+
+	app.recordActivity(r.Context(), models.ActivityCreateInput{
+		ProjectID:  project.ID,
+		UserID:     &user.ID,
+		Action:     "deleted",
+		EntityType: "dependency",
+		EntityID:   &task.ID,
+	})
 
 	w.WriteHeader(http.StatusNoContent)
 }

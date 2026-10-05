@@ -435,6 +435,14 @@ func (app *application) updateTaskHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	app.recordActivity(r.Context(), models.ActivityCreateInput{
+		ProjectID:  updatedTask.ProjectID,
+		UserID:     &user.ID,
+		Action:     "updated",
+		EntityType: "task",
+		EntityID:   &updatedTask.ID,
+	})
+
 	if err := app.writeJSON(w, http.StatusOK, newTaskResponse(updatedTask)); err != nil {
 		app.errorLog.Printf(
 			"encode updated task response: %v",
@@ -555,6 +563,14 @@ func (app *application) createTaskHandler(w http.ResponseWriter, r *http.Request
 		app.serverError(w, err)
 		return
 	}
+
+	app.recordActivity(r.Context(), models.ActivityCreateInput{
+		ProjectID:  task.ProjectID,
+		UserID:     &user.ID,
+		Action:     "created",
+		EntityType: "task",
+		EntityID:   &task.ID,
+	})
 
 	if err := app.writeJSON(w, http.StatusCreated, newTaskResponse(task)); err != nil {
 		app.errorLog.Printf("encode task response: %v", err)
@@ -825,5 +841,14 @@ func (app *application) deleteTaskHandler(w http.ResponseWriter, r *http.Request
 		app.serverError(w, err)
 		return
 	}
+
+	app.recordActivity(r.Context(), models.ActivityCreateInput{
+		ProjectID:  project.ID,
+		UserID:     &user.ID,
+		Action:     "deleted",
+		EntityType: "task",
+		EntityID:   &task.ID,
+	})
+
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -83,7 +83,7 @@ func ResetDatabase(t testing.TB, db *sql.DB) {
 	t.Helper()
 
 	const query = `
-		TRUNCATE TABLE task_dependencies, tasks, project_members, projects, sessions, email_verification_tokens, users
+		TRUNCATE TABLE activity_logs, task_dependencies, tasks, project_members, projects, sessions, email_verification_tokens, users
 		RESTART IDENTITY
 	`
 

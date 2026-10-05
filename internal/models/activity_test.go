@@ -107,7 +107,6 @@ func TestActivityModelCreate(t *testing.T) {
 		)
 	}
 }
-
 func TestActivityModelCreateUsesDefaultMetadata(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 	testutil.ResetDatabase(t, db)
@@ -184,5 +183,198 @@ func TestActivityModelCreateRejectsInvalidInput(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected invalid metadata error, got nil")
+	}
+}
+
+func TestActivityModelListByProjectForUser(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() { testutil.ResetDatabase(t, db) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	users := &models.UserModel{DB: db}
+	projects := &models.ProjectModel{DB: db}
+	members := &models.ProjectMemberModel{DB: db}
+	activities := &models.ActivityModel{DB: db}
+
+	owner, err := users.Create(
+		ctx,
+		"activity-list-owner@example.com",
+		"Activity List Owner",
+		"correct-password",
+	)
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+
+	viewer, err := users.Create(
+		ctx,
+		"activity-list-viewer@example.com",
+		"Activity List Viewer",
+		"correct-password",
+	)
+	if err != nil {
+		t.Fatalf("create viewer: %v", err)
+	}
+
+	project, err := projects.Create(
+		ctx,
+		owner.ID,
+		"Activity list project",
+		"Project for activity list testing",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	if _, err := members.Create(
+		ctx,
+		project.ID,
+		viewer.ID,
+		models.ProjectMemberRoleViewer,
+	); err != nil {
+		t.Fatalf("create viewer membership: %v", err)
+	}
+
+	actions := []string{
+		"created",
+		"status_changed",
+		"status_changed",
+	}
+
+	createdActivities := make([]models.Activity, 0, len(actions))
+
+	for _, action := range actions {
+		activity, err := activities.Create(
+			ctx,
+			models.ActivityCreateInput{
+				ProjectID:  project.ID,
+				UserID:     &owner.ID,
+				Action:     action,
+				EntityType: "task",
+			},
+		)
+		if err != nil {
+			t.Fatalf("create activity %q: %v", action, err)
+		}
+
+		createdActivities = append(createdActivities, activity)
+	}
+
+	// Request only the first two newest records.
+	list, err := activities.ListByProjectForUser(
+		ctx,
+		project.ID,
+		owner.ID,
+		models.ActivityListOptions{
+			Page:     1,
+			PageSize: 2,
+		},
+	)
+	if err != nil {
+		t.Fatalf("list activities: %v", err)
+	}
+
+	if list.TotalItems != 3 {
+		t.Errorf("total items = %d, want 3", list.TotalItems)
+	}
+
+	if len(list.Activities) != 2 {
+		t.Fatalf("activity count = %d, want 2", len(list.Activities))
+	}
+
+	// Newest activity should appear first.
+	if list.Activities[0].ID != createdActivities[2].ID {
+		t.Errorf(
+			"first activity ID = %d, want newest ID %d",
+			list.Activities[0].ID,
+			createdActivities[2].ID,
+		)
+	}
+
+	// Filter by action.
+	action := "status_changed"
+
+	filtered, err := activities.ListByProjectForUser(
+		ctx,
+		project.ID,
+		owner.ID,
+		models.ActivityListOptions{
+			Page:       1,
+			PageSize:   10,
+			Action:     &action,
+			EntityType: nil,
+		},
+	)
+	if err != nil {
+		t.Fatalf("list filtered activities: %v", err)
+	}
+
+	if filtered.TotalItems != 2 {
+		t.Errorf("filtered total items = %d, want 2", filtered.TotalItems)
+	}
+
+	if len(filtered.Activities) != 2 {
+		t.Errorf(
+			"filtered activity count = %d, want 2",
+			len(filtered.Activities),
+		)
+	}
+
+	// Project members should also be allowed to view activity history.
+	viewerList, err := activities.ListByProjectForUser(
+		ctx,
+		project.ID,
+		viewer.ID,
+		models.ActivityListOptions{
+			Page:     1,
+			PageSize: 10,
+		},
+	)
+	if err != nil {
+		t.Fatalf("list activities as viewer: %v", err)
+	}
+
+	if viewerList.TotalItems != 3 {
+		t.Errorf("viewer total items = %d, want 3", viewerList.TotalItems)
+	}
+}
+
+func TestActivityModelListRejectsInvalidOptions(t *testing.T) {
+	activities := &models.ActivityModel{}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		databaseTestTimeout,
+	)
+	defer cancel()
+
+	_, err := activities.ListByProjectForUser(
+		ctx,
+		1,
+		1,
+		models.ActivityListOptions{
+			Page:     0,
+			PageSize: 10,
+		},
+	)
+	if err == nil {
+		t.Fatal("expected invalid page error, got nil")
+	}
+
+	_, err = activities.ListByProjectForUser(
+		ctx,
+		1,
+		1,
+		models.ActivityListOptions{
+			Page:     1,
+			PageSize: 0,
+		},
+	)
+	if err == nil {
+		t.Fatal("expected invalid page size error, got nil")
 	}
 }

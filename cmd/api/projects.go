@@ -189,6 +189,14 @@ func (app *application) createProjectHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	app.recordActivity(r.Context(), models.ActivityCreateInput{
+		ProjectID:  project.ID,
+		UserID:     &user.ID,
+		Action:     "created",
+		EntityType: "project",
+		EntityID:   &project.ID,
+	})
+
 	if err := app.writeJSON(w, http.StatusCreated, newProjectResponse(project)); err != nil {
 		app.errorLog.Printf("encode project response: %v", err)
 	}
@@ -233,6 +241,14 @@ func (app *application) updateProjectHandler(w http.ResponseWriter, r *http.Requ
 		app.serverError(w, err)
 		return
 	}
+
+	app.recordActivity(r.Context(), models.ActivityCreateInput{
+		ProjectID:  updatedProject.ID,
+		UserID:     &user.ID,
+		Action:     "updated",
+		EntityType: "project",
+		EntityID:   &updatedProject.ID,
+	})
 
 	if err := app.writeJSON(w, http.StatusOK, newProjectResponse(updatedProject)); err != nil {
 		app.errorLog.Printf("encode updated project response: %v", err)

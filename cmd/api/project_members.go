@@ -83,6 +83,15 @@ func (app *application) createProjectMemberHandler(w http.ResponseWriter, r *htt
 	member.Name = memberUser.Name
 	member.Email = memberUser.Email
 
+	memberID := member.UserID
+	app.recordActivity(r.Context(), models.ActivityCreateInput{
+		ProjectID:  project.ID,
+		UserID:     &owner.ID,
+		Action:     "added",
+		EntityType: "member",
+		EntityID:   &memberID,
+	})
+
 	if err := app.writeJSON(w, http.StatusCreated, newProjectMemberResponse(member)); err != nil {
 		app.errorLog.Printf("encode project member response: %v", err)
 	}
@@ -158,6 +167,15 @@ func (app *application) updateProjectMemberHandler(w http.ResponseWriter, r *htt
 	member.Name = memberUser.Name
 	member.Email = memberUser.Email
 
+	memberID := member.UserID
+	app.recordActivity(r.Context(), models.ActivityCreateInput{
+		ProjectID:  project.ID,
+		UserID:     &project.UserID,
+		Action:     "role_changed",
+		EntityType: "member",
+		EntityID:   &memberID,
+	})
+
 	if err := app.writeJSON(w, http.StatusOK, newProjectMemberResponse(member)); err != nil {
 		app.errorLog.Printf("encode project member response: %v", err)
 	}
@@ -187,6 +205,14 @@ func (app *application) deleteProjectMemberHandler(w http.ResponseWriter, r *htt
 		app.serverError(w, err)
 		return
 	}
+
+	app.recordActivity(r.Context(), models.ActivityCreateInput{
+		ProjectID:  project.ID,
+		UserID:     &project.UserID,
+		Action:     "removed",
+		EntityType: "member",
+		EntityID:   &memberUserID,
+	})
 
 	w.WriteHeader(http.StatusNoContent)
 }

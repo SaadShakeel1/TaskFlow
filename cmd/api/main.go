@@ -43,8 +43,9 @@ type application struct {
 	projects           *models.ProjectModel
 	projectMembers     *models.ProjectMemberModel
 	tasks              *models.TaskModel
+	taskDependencies   *models.TaskDependencyModel
+	activity           *models.ActivityModel
 	mailer             mailer.Sender
-	taskDependencies *models.TaskDependencyModel
 }
 
 func main() {
@@ -101,7 +102,8 @@ func main() {
 		projects:           &models.ProjectModel{DB: db},
 		projectMembers:     &models.ProjectMemberModel{DB: db},
 		tasks:              &models.TaskModel{DB: db},
-		taskDependencies: &models.TaskDependencyModel{DB: db},
+		taskDependencies:   &models.TaskDependencyModel{DB: db},
+		activity:           &models.ActivityModel{DB: db},
 		mailer: mailer.New(mailer.Config{
 			SMTPAddress:  cfg.mailer.smtpAddress,
 			SMTPUsername: cfg.mailer.smtpUsername,

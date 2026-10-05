@@ -29,6 +29,7 @@ func newTestApplication(db *sql.DB) *application {
 		projects:           &models.ProjectModel{DB: db},
 		projectMembers:     &models.ProjectMemberModel{DB: db},
 		tasks:              &models.TaskModel{DB: db},
-		taskDependencies: &models.TaskDependencyModel{DB: db},
+		taskDependencies:   &models.TaskDependencyModel{DB: db},
+		activity:           &models.ActivityModel{DB: db},
 	}
 }

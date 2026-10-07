@@ -7,10 +7,10 @@ func (app *application) routes() http.Handler {
 
 	mux.HandleFunc("GET /health", app.healthHandler)
 	mux.HandleFunc("POST /greet", app.greetingHandler)
-	mux.HandleFunc("POST /users", app.createUserHandler)
+	mux.Handle("POST /users", app.rateLimit("registration", registrationRateLimit, http.HandlerFunc(app.createUserHandler)))
 	mux.HandleFunc("GET /users/{id}", app.getUserHandler)
-	mux.HandleFunc("POST /users/verify-email", app.verifyEmailHandler)
-	mux.HandleFunc("POST /sessions", app.createSessionHandler)
+	mux.Handle("POST /users/verify-email", app.rateLimit("verification", emailVerificationRateLimit, http.HandlerFunc(app.verifyEmailHandler)))
+	mux.Handle("POST /sessions", app.rateLimit("login", loginRateLimit, http.HandlerFunc(app.createSessionHandler)))
 	mux.HandleFunc("GET /verify-email", app.verifyEmailPageHandler)
 	mux.Handle("GET /me", app.requireAuthentication(http.HandlerFunc(app.currentUserHandler)))
 	mux.Handle("DELETE /sessions/current", app.requireAuthentication(http.HandlerFunc(app.deleteCurrentSessionHandler)))

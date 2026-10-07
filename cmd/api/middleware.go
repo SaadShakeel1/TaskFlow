@@ -4,14 +4,66 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"time"
 
 	"github.com/SaadShakeel1/TaskFlow/internal/models"
+	"golang.org/x/time/rate"
 )
 
 type contextKey string
 
 const userContextKey contextKey = "user"
+
+type rateLimitPolicy struct {
+	limit rate.Limit
+	burst int
+}
+
+var (
+	registrationRateLimit = rateLimitPolicy{
+		limit: rate.Every(20 * time.Minute),
+		burst: 3,
+	}
+
+	loginRateLimit = rateLimitPolicy{
+		limit: rate.Every(2 * time.Minute),
+		burst: 5,
+	}
+
+	emailVerificationRateLimit = rateLimitPolicy{
+		limit: rate.Every(6 * time.Second),
+		burst: 10,
+	}
+)
+
+func requestClientIP(remoteAddr string) string {
+	if remoteAddr == "" {
+		return "unknown"
+	}
+
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return remoteAddr
+	}
+
+	return host
+}
+
+func (app *application) rateLimit(scope string, policy rateLimitPolicy, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clientIP := requestClientIP(r.RemoteAddr)
+		key := scope + ":" + clientIP
+
+		if !app.rateLimiter.allow(key, policy.limit, policy.burst) {
+			app.clientError(w, http.StatusTooManyRequests, "rate limit exceeded")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
 
 func (app *application) requireAuthentication(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

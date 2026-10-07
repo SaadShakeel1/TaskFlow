@@ -31,5 +31,6 @@ func newTestApplication(db *sql.DB) *application {
 		tasks:              &models.TaskModel{DB: db},
 		taskDependencies:   &models.TaskDependencyModel{DB: db},
 		activity:           &models.ActivityModel{DB: db},
+		rateLimiter:        newRateLimiter(),
 	}
 }

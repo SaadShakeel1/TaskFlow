@@ -46,6 +46,7 @@ type application struct {
 	taskDependencies   *models.TaskDependencyModel
 	activity           *models.ActivityModel
 	mailer             mailer.Sender
+	rateLimiter        *rateLimiter
 }
 
 func main() {
@@ -104,6 +105,7 @@ func main() {
 		tasks:              &models.TaskModel{DB: db},
 		taskDependencies:   &models.TaskDependencyModel{DB: db},
 		activity:           &models.ActivityModel{DB: db},
+		rateLimiter:        newRateLimiter(),
 		mailer: mailer.New(mailer.Config{
 			SMTPAddress:  cfg.mailer.smtpAddress,
 			SMTPUsername: cfg.mailer.smtpUsername,

@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -122,9 +126,17 @@ func main() {
 		IdleTimeout:       time.Minute,
 	}
 
-	infoLog.Printf("starting server on %s", cfg.addr)
+	listener, err := net.Listen("tcp", cfg.addr)
+	if err != nil {
+		errorLog.Fatal(err)
+	}
 
-	if err := server.ListenAndServe(); err != nil {
+	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	infoLog.Printf("starting server on %s", listener.Addr())
+
+	if err := app.serve(shutdownContext, server, listener); err != nil {
 		errorLog.Fatal(err)
 	}
 }

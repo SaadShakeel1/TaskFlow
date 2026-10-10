@@ -13,11 +13,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/joho/godotenv"
-
 	"github.com/SaadShakeel1/TaskFlow/internal/database"
 	"github.com/SaadShakeel1/TaskFlow/internal/mailer"
 	"github.com/SaadShakeel1/TaskFlow/internal/models"
+	"github.com/SaadShakeel1/TaskFlow/internal/notifications"
+	"github.com/joho/godotenv"
 )
 
 type mailerConfig struct {
@@ -36,6 +36,11 @@ type config struct {
 	sessionCookieSecure bool
 }
 
+type notificationDispatcher interface {
+	Enqueue(email mailer.Email) error
+	Shutdown(ctx context.Context) error
+}
+
 type application struct {
 	config             config
 	db                 *sql.DB
@@ -50,6 +55,7 @@ type application struct {
 	taskDependencies   *models.TaskDependencyModel
 	activity           *models.ActivityModel
 	mailer             mailer.Sender
+	notifications      notificationDispatcher
 	rateLimiter        *rateLimiter
 }
 
@@ -96,6 +102,15 @@ func main() {
 	}
 	defer db.Close()
 
+	emailSender := mailer.New(mailer.Config{
+		SMTPAddress:  cfg.mailer.smtpAddress,
+		SMTPUsername: cfg.mailer.smtpUsername,
+		SMTPPassword: cfg.mailer.smtpPassword,
+		From:         cfg.mailer.from,
+	})
+
+	notificationQueue := notifications.New(emailSender, errorLog)
+
 	app := &application{
 		config:             cfg,
 		db:                 db,
@@ -110,12 +125,8 @@ func main() {
 		taskDependencies:   &models.TaskDependencyModel{DB: db},
 		activity:           &models.ActivityModel{DB: db},
 		rateLimiter:        newRateLimiter(),
-		mailer: mailer.New(mailer.Config{
-			SMTPAddress:  cfg.mailer.smtpAddress,
-			SMTPUsername: cfg.mailer.smtpUsername,
-			SMTPPassword: cfg.mailer.smtpPassword,
-			From:         cfg.mailer.from,
-		}),
+		mailer:             emailSender,
+		notifications:      notificationQueue,
 	}
 
 	server := &http.Server{

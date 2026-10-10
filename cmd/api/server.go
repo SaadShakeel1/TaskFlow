@@ -39,6 +39,17 @@ func (app *application) serve(ctx context.Context, server *http.Server, listener
 		return fmt.Errorf("serve HTTP: %w", err)
 	}
 
+	if app.notifications != nil {
+		app.infoLog.Print("draining notification queue")
+
+		if err := app.notifications.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf(
+				"shutdown notification dispatcher: %w",
+				err,
+			)
+		}
+	}
+
 	app.infoLog.Print("server stopped")
 
 	return nil

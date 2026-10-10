@@ -571,6 +571,7 @@ func (app *application) createTaskHandler(w http.ResponseWriter, r *http.Request
 		EntityType: "task",
 		EntityID:   &task.ID,
 	})
+	app.enqueueTaskAssignmentNotification(r.Context(), project, task)
 
 	if err := app.writeJSON(w, http.StatusCreated, newTaskResponse(task)); err != nil {
 		app.errorLog.Printf("encode task response: %v", err)

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/SaadShakeel1/TaskFlow/internal/models"
+	"github.com/SaadShakeel1/TaskFlow/internal/notifications"
 	"github.com/SaadShakeel1/TaskFlow/internal/testutil"
 )
 
@@ -24,6 +25,8 @@ func TestCreateTaskEndpoint(t *testing.T) {
 	defer cancel()
 
 	app := newTestApplication(db)
+	notificationRecorder := &recordingNotificationDispatcher{}
+	app.notifications = notificationRecorder
 
 	owner, ownerToken := createAuthenticatedTestUser(t, app, ctx)
 
@@ -147,6 +150,75 @@ func TestCreateTaskEndpoint(t *testing.T) {
 
 	if response.Version != 1 {
 		t.Errorf("version = %d, want 1", response.Version)
+	}
+
+	emails := notificationRecorder.Emails()
+	if len(emails) != 1 {
+		t.Fatalf("queued notification count = %d, want 1", len(emails))
+	}
+
+	if emails[0].To != owner.Email {
+		t.Errorf("notification recipient = %q, want %q", emails[0].To, owner.Email)
+	}
+
+	if !strings.Contains(emails[0].Body, response.Title) {
+		t.Errorf("notification body = %q, want task title", emails[0].Body)
+	}
+
+	if !strings.Contains(emails[0].Body, project.Name) {
+		t.Errorf("notification body = %q, want project name", emails[0].Body)
+	}
+}
+
+func TestCreateTaskEndpointSucceedsWhenNotificationQueueIsFull(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	testutil.ResetDatabase(t, db)
+	t.Cleanup(func() {
+		testutil.ResetDatabase(t, db)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), databaseTestTimeout)
+	defer cancel()
+
+	app := newTestApplication(db)
+	app.notifications = &recordingNotificationDispatcher{
+		enqueueErr: notifications.ErrQueueFull,
+	}
+
+	owner, ownerToken := createAuthenticatedTestUser(t, app, ctx)
+
+	project, err := app.projects.Create(
+		ctx,
+		owner.ID,
+		"Queue failure project",
+		"Verify notification failures do not fail task creation",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	body := fmt.Sprintf(`{
+		"assigneeId": %d,
+		"title": "Task survives queue failure"
+	}`, owner.ID)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		fmt.Sprintf("/projects/%d/tasks", project.ID),
+		strings.NewReader(body),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: ownerToken,
+	})
+
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status code = %d, want %d", recorder.Code, http.StatusCreated)
 	}
 }
 

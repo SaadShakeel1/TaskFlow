@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -39,8 +38,8 @@ func (app *application) createProjectMemberHandler(w http.ResponseWriter, r *htt
 	}
 
 	var request createProjectMemberRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		app.clientError(w, http.StatusBadRequest, "request body must be valid JSON")
+	if requestError := readJSON(w, r, &request); requestError != nil {
+		app.clientError(w, requestError.status, requestError.message)
 		return
 	}
 
@@ -138,8 +137,8 @@ func (app *application) updateProjectMemberHandler(w http.ResponseWriter, r *htt
 	}
 
 	var request updateProjectMemberRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		app.clientError(w, http.StatusBadRequest, "request body must be valid JSON")
+	if requestError := readJSON(w, r, &request); requestError != nil {
+		app.clientError(w, requestError.status, requestError.message)
 		return
 	}
 

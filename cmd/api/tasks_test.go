@@ -420,7 +420,7 @@ func TestCreateTaskEndpointRejectsInvalidInput(t *testing.T) {
 		{
 			name: "unknown field",
 			body: `{"title":"Valid title","unknown":"value"}`,
-			want: "request body must be valid JSON\n",
+			want: "request body contains unknown field \"unknown\"\n",
 		},
 	}
 

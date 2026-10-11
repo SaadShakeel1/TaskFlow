@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -66,10 +65,8 @@ func (app *application) createTaskDependencyHandler(w http.ResponseWriter, r *ht
 	}
 
 	var request createTaskDependencyRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		app.clientError(w, http.StatusBadRequest, "request body must be valid JSON")
+	if requestError := readJSON(w, r, &request); requestError != nil {
+		app.clientError(w, requestError.status, requestError.message)
 		return
 	}
 

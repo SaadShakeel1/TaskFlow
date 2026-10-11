@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -20,8 +19,8 @@ type createSessionRequest struct {
 func (app *application) createSessionHandler(w http.ResponseWriter, r *http.Request) {
 	var request createSessionRequest
 
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		app.clientError(w, http.StatusBadRequest, "request body must be valid JSON")
+	if requestError := readJSON(w, r, &request); requestError != nil {
+		app.clientError(w, requestError.status, requestError.message)
 		return
 	}
 

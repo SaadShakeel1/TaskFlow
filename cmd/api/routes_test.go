@@ -90,8 +90,8 @@ func TestGreetingEndpointRejectsInvalidJSON(t *testing.T) {
 		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
 
-	if got := recorder.Body.String(); got != "request body must be valid JSON\n" {
-		t.Errorf("response body = %q, want %q", got, "request body must be valid JSON\n")
+	if got := recorder.Body.String(); got != "request body contains badly-formed JSON\n" {
+		t.Errorf("response body = %q, want %q", got, "request body contains badly-formed JSON\n")
 	}
 }
 

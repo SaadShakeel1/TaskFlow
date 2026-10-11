@@ -148,8 +148,8 @@ func mergeProjectUpdate(project models.Project, request updateProjectRequest) (m
 func (app *application) createProjectHandler(w http.ResponseWriter, r *http.Request) {
 	var request createProjectRequest
 
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		app.clientError(w, http.StatusBadRequest, "request body must be valid JSON")
+	if requestError := readJSON(w, r, &request); requestError != nil {
+		app.clientError(w, requestError.status, requestError.message)
 		return
 	}
 
@@ -211,11 +211,8 @@ func (app *application) updateProjectHandler(w http.ResponseWriter, r *http.Requ
 
 	var request updateProjectRequest
 
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	if err := decoder.Decode(&request); err != nil {
-		app.clientError(w, http.StatusBadRequest, "request body must be valid JSON")
+	if requestError := readJSON(w, r, &request); requestError != nil {
+		app.clientError(w, requestError.status, requestError.message)
 		return
 	}
 

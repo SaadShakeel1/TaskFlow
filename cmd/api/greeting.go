@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 )
@@ -17,8 +16,8 @@ type greetingResponse struct {
 func (app *application) greetingHandler(w http.ResponseWriter, r *http.Request) {
 	var request greetingRequest
 
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		app.clientError(w, http.StatusBadRequest, "request body must be valid JSON")
+	if requestError := readJSON(w, r, &request); requestError != nil {
+		app.clientError(w, requestError.status, requestError.message)
 		return
 	}
 

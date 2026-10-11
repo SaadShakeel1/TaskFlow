@@ -231,7 +231,7 @@ func TestCreateSessionEndpointRejectsInvalidRequests(t *testing.T) {
 		{
 			name:     "invalid JSON",
 			body:     `{"email":`,
-			wantBody: "request body must be valid JSON\n",
+			wantBody: "request body contains badly-formed JSON\n",
 		},
 		{
 			name:     "missing email",

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -45,8 +44,8 @@ type userResponse struct {
 func (app *application) createUserHandler(w http.ResponseWriter, r *http.Request) {
 	var request createUserRequest
 
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		app.clientError(w, http.StatusBadRequest, "request body must be valid JSON")
+	if requestError := readJSON(w, r, &request); requestError != nil {
+		app.clientError(w, requestError.status, requestError.message)
 		return
 	}
 
@@ -124,8 +123,8 @@ func (app *application) createUserHandler(w http.ResponseWriter, r *http.Request
 func (app *application) verifyEmailHandler(w http.ResponseWriter, r *http.Request) {
 	var request verifyEmailRequest
 
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		app.clientError(w, http.StatusBadRequest, "request body must be valid JSON")
+	if requestError := readJSON(w, r, &request); requestError != nil {
+		app.clientError(w, requestError.status, requestError.message)
 		return
 	}
 

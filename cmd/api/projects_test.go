@@ -888,7 +888,7 @@ func TestUpdateProjectEndpointRejectsInvalidRequests(t *testing.T) {
 		{
 			name:     "unknown field",
 			body:     `{"ownerId":99}`,
-			wantBody: "request body must be valid JSON\n",
+			wantBody: "request body contains unknown field \"ownerId\"\n",
 		},
 	}
 

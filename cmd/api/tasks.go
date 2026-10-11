@@ -385,15 +385,8 @@ func (app *application) updateTaskHandler(w http.ResponseWriter, r *http.Request
 
 	var request updateTaskRequest
 
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	if err := decoder.Decode(&request); err != nil {
-		app.clientError(
-			w,
-			http.StatusBadRequest,
-			"request body must be valid JSON",
-		)
+	if requestError := readJSON(w, r, &request); requestError != nil {
+		app.clientError(w, requestError.status, requestError.message)
 		return
 	}
 
@@ -482,11 +475,8 @@ func (app *application) createTaskHandler(w http.ResponseWriter, r *http.Request
 
 	var request createTaskRequest
 
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	if err := decoder.Decode(&request); err != nil {
-		app.clientError(w, http.StatusBadRequest, "request body must be valid JSON")
+	if requestError := readJSON(w, r, &request); requestError != nil {
+		app.clientError(w, requestError.status, requestError.message)
 		return
 	}
 

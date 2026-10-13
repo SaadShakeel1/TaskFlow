@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 
@@ -73,4 +74,54 @@ func TestGroqAnalyzerAnalyze(t *testing.T) {
 	if len(result.Findings) != 1 || result.Findings[0].Evidence.TaskIDs[0] != 12 {
 		t.Errorf("unexpected findings: %#v", result.Findings)
 	}
+}
+
+func TestGroqAnalyzerLive(t *testing.T) {
+	if os.Getenv("RUN_GROQ_LIVE_TEST") != "1" {
+		t.Skip("set RUN_GROQ_LIVE_TEST=1 to call Groq")
+	}
+
+	apiKey := strings.TrimSpace(os.Getenv("GROQ_API_KEY"))
+	if apiKey == "" {
+		t.Fatal("GROQ_API_KEY must be set for the live test")
+	}
+
+	model := strings.TrimSpace(os.Getenv("GROQ_MODEL"))
+	if model == "" {
+		model = "openai/gpt-oss-20b"
+	}
+
+	analyzer, err := NewGroqAnalyzer(GroqAnalyzerConfig{
+		APIKey: apiKey,
+		Model:  model,
+	})
+	if err != nil {
+		t.Fatalf("create Groq analyzer: %v", err)
+	}
+
+	result, err := analyzer.Analyze(context.Background(), models.ProjectAnalysisContext{
+		SchemaVersion: 1,
+		Project: models.ProjectAnalysisProject{
+			ID:   1,
+			Name: "Synthetic live-test project",
+		},
+		Tasks: []models.ProjectAnalysisTask{{
+			ID:            10,
+			Title:         "Blocked deployment",
+			Status:        models.TaskStatusBlocked,
+			BlockedReason: pointerTo("Waiting for production credentials"),
+			Priority:      models.TaskPriorityHigh,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("analyze with Groq: %v", err)
+	}
+
+	if strings.TrimSpace(result.Summary) == "" {
+		t.Fatal("Groq result summary is empty")
+	}
+}
+
+func pointerTo(value string) *string {
+	return &value
 }

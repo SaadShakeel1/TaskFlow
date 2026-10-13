@@ -13,6 +13,17 @@ const gracefulShutdownTimeout = 10 * time.Second
 
 func (app *application) serve(ctx context.Context, server *http.Server, listener net.Listener) error {
 	serverError := make(chan error, 1)
+	var aiWorkerDone <-chan struct{}
+
+	if app.aiWorker != nil {
+		workerDone := make(chan struct{})
+		aiWorkerDone = workerDone
+
+		go func() {
+			defer close(workerDone)
+			app.aiWorker.Run(ctx)
+		}()
+	}
 
 	go func() {
 		serverError <- server.Serve(listener)
@@ -47,6 +58,14 @@ func (app *application) serve(ctx context.Context, server *http.Server, listener
 				"shutdown notification dispatcher: %w",
 				err,
 			)
+		}
+	}
+
+	if aiWorkerDone != nil {
+		select {
+		case <-aiWorkerDone:
+		case <-shutdownCtx.Done():
+			return errors.New("shutdown AI worker: timed out")
 		}
 	}
 

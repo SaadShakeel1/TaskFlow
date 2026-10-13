@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/SaadShakeel1/TaskFlow/internal/ai"
 	"github.com/SaadShakeel1/TaskFlow/internal/database"
 	"github.com/SaadShakeel1/TaskFlow/internal/mailer"
 	"github.com/SaadShakeel1/TaskFlow/internal/models"
@@ -27,11 +28,19 @@ type mailerConfig struct {
 	from         string
 }
 
+type aiConfig struct {
+	groqAPIKey     string
+	groqModel      string
+	pollInterval   time.Duration
+	processTimeout time.Duration
+}
+
 type config struct {
 	addr                string
 	appURL              string
 	databaseURL         string
 	mailer              mailerConfig
+	ai                  aiConfig
 	sessionTTL          time.Duration
 	sessionCookieSecure bool
 }
@@ -39,6 +48,10 @@ type config struct {
 type notificationDispatcher interface {
 	Enqueue(email mailer.Email) error
 	Shutdown(ctx context.Context) error
+}
+
+type aiWorker interface {
+	Run(context.Context)
 }
 
 type application struct {
@@ -54,9 +67,11 @@ type application struct {
 	tasks              *models.TaskModel
 	taskDependencies   *models.TaskDependencyModel
 	activity           *models.ActivityModel
+	aiAnalysisRuns     *models.AIAnalysisRunModel
 	mailer             mailer.Sender
 	notifications      notificationDispatcher
 	rateLimiter        *rateLimiter
+	aiWorker           aiWorker
 }
 
 func main() {
@@ -76,6 +91,10 @@ func main() {
 	flag.StringVar(&cfg.mailer.smtpUsername, "smtp-username", os.Getenv("SMTP_USERNAME"), "SMTP username")
 	flag.StringVar(&cfg.mailer.smtpPassword, "smtp-password", os.Getenv("SMTP_PASSWORD"), "SMTP password")
 	flag.StringVar(&cfg.mailer.from, "mail-from", os.Getenv("MAIL_FROM"), "Email sender address")
+	flag.StringVar(&cfg.ai.groqAPIKey, "groq-api-key", os.Getenv("GROQ_API_KEY"), "Groq API key")
+	flag.StringVar(&cfg.ai.groqModel, "groq-model", os.Getenv("GROQ_MODEL"), "Groq model")
+	flag.DurationVar(&cfg.ai.pollInterval, "ai-poll-interval", time.Second, "AI worker polling interval")
+	flag.DurationVar(&cfg.ai.processTimeout, "ai-process-timeout", 60*time.Second, "Maximum duration of one AI analysis")
 	flag.DurationVar(&cfg.sessionTTL, "session-ttl", 7*24*time.Hour, "Session lifetime")
 	flag.BoolVar(&cfg.sessionCookieSecure, "session-cookie-secure", false, "Require HTTPS for session cookie")
 	flag.Parse()
@@ -96,6 +115,14 @@ func main() {
 		errorLog.Fatal("MAIL_FROM must be set")
 	}
 
+	if cfg.ai.groqAPIKey == "" {
+		errorLog.Fatal("GROQ_API_KEY must be set")
+	}
+
+	if cfg.ai.groqModel == "" {
+		errorLog.Fatal("GROQ_MODEL must be set")
+	}
+
 	db, err := database.Open(cfg.databaseURL)
 	if err != nil {
 		errorLog.Fatal(err)
@@ -110,6 +137,27 @@ func main() {
 	})
 
 	notificationQueue := notifications.New(emailSender, errorLog)
+	aiAnalyzer, err := ai.NewGroqAnalyzer(ai.GroqAnalyzerConfig{
+		APIKey: cfg.ai.groqAPIKey,
+		Model:  cfg.ai.groqModel,
+	})
+	if err != nil {
+		errorLog.Fatal(err)
+	}
+
+	aiAnalysisRuns := &models.AIAnalysisRunModel{DB: db}
+	aiWorker, err := ai.NewWorker(
+		aiAnalysisRuns,
+		aiAnalyzer,
+		errorLog,
+		"groq",
+		cfg.ai.groqModel,
+		cfg.ai.pollInterval,
+		cfg.ai.processTimeout,
+	)
+	if err != nil {
+		errorLog.Fatal(err)
+	}
 
 	app := &application{
 		config:             cfg,
@@ -124,9 +172,11 @@ func main() {
 		tasks:              &models.TaskModel{DB: db},
 		taskDependencies:   &models.TaskDependencyModel{DB: db},
 		activity:           &models.ActivityModel{DB: db},
+		aiAnalysisRuns:     aiAnalysisRuns,
 		rateLimiter:        newRateLimiter(),
 		mailer:             emailSender,
 		notifications:      notificationQueue,
+		aiWorker:           aiWorker,
 	}
 
 	server := &http.Server{

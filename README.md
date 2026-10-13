@@ -127,13 +127,6 @@ All routes except registration, login, email verification, health, and greeting 
 
 `POST /projects/{id}/analysis-runs` returns `202 Accepted`. The background worker processes the saved project snapshot and the client can poll the returned run URL for `queued`, `running`, `succeeded`, or `failed` status.
 
-## Security notes
-
-- `.env` is ignored and must never be committed.
-- Use a dedicated Groq key with appropriate usage limits.
-- The AI worker sends only a scoped project snapshot; it never exposes database credentials, sessions, password hashes, or verification tokens.
-- AI findings are advisory. They do not change projects or tasks automatically.
-
 ## Development status
 
 The backend core is complete. Future work can include deployment, OpenAPI documentation, a frontend, observability, additional worker retry policies, and human-approved AI actions.
